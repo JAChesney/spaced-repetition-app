@@ -30,10 +30,12 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, on_edit) -> ft.Cont
     count_text = ft.Text("", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
 
     prev_btn = ft.IconButton(ft.Icons.CHEVRON_LEFT, tooltip="Previous page", disabled=True,
+                             icon_size=18, padding=ft.Padding.all(4),
                              on_click=lambda _: _go_page(state["page"] - 1))
     next_btn = ft.IconButton(ft.Icons.CHEVRON_RIGHT, tooltip="Next page", disabled=True,
+                             icon_size=18, padding=ft.Padding.all(4),
                              on_click=lambda _: _go_page(state["page"] + 1))
-    page_label = ft.Text("", size=12)
+    page_label = ft.Text("", size=12, width=90, text_align=ft.TextAlign.CENTER)
 
     def _debounce_search():
         if state["timer"]:
@@ -170,7 +172,15 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, on_edit) -> ft.Cont
             ),
             ft.Row([search_field, subject_filter], spacing=10),
             ft.Row(
-                [count_text, ft.Container(expand=True), prev_btn, page_label, next_btn],
+                [
+                    ft.Container(content=count_text, expand=True),
+                    ft.Row(
+                        [prev_btn, page_label, next_btn],
+                        spacing=0,
+                        tight=True,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                ],
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             ft.Divider(height=4, color=ft.Colors.TRANSPARENT),
