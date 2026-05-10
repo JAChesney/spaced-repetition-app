@@ -23,7 +23,11 @@ class AbstractRepository(ABC):
     def get_mcq(self, mcq_id: int) -> Optional[MCQ]: ...
 
     @abstractmethod
-    def list_mcqs(self, subject: str = "", topic: str = "") -> list[MCQ]: ...
+    def list_mcqs(self, subject: str = "", topic: str = "", search: str = "",
+                  limit: int = 0, offset: int = 0) -> list[MCQ]: ...
+
+    @abstractmethod
+    def count_mcqs(self, subject: str = "", topic: str = "", search: str = "") -> int: ...
 
     @abstractmethod
     def get_due_mcqs(self, limit: int = 20, subject: str = "", topic: str = "") -> list[MCQ]: ...
@@ -104,6 +108,12 @@ class SQLiteRepository(AbstractRepository):
                     was_correct INTEGER NOT NULL,
                     reviewed_at TEXT DEFAULT (datetime('now'))
                 );
+
+                CREATE INDEX IF NOT EXISTS idx_mcqs_subject ON mcqs(subject);
+                CREATE INDEX IF NOT EXISTS idx_mcqs_topic ON mcqs(topic);
+                CREATE INDEX IF NOT EXISTS idx_mcqs_subject_topic ON mcqs(subject, topic);
+                CREATE INDEX IF NOT EXISTS idx_cp_next_review ON card_progress(next_review_date);
+                CREATE INDEX IF NOT EXISTS idx_rl_reviewed_at ON review_logs(reviewed_at);
             """)
 
     # --- MCQ CRUD ---
@@ -141,7 +151,25 @@ class SQLiteRepository(AbstractRepository):
             row = conn.execute("SELECT * FROM mcqs WHERE id=?", (mcq_id,)).fetchone()
         return self._row_to_mcq(row) if row else None
 
-    def list_mcqs(self, subject: str = "", topic: str = "") -> list[MCQ]:
+    def list_mcqs(self, subject: str = "", topic: str = "", search: str = "",
+                  limit: int = 0, offset: int = 0) -> list[MCQ]:
+        sql, params = self._mcqs_filter_sql(subject, topic, search)
+        sql += " ORDER BY created_at DESC"
+        if limit:
+            sql += " LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+        with self._conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._row_to_mcq(r) for r in rows]
+
+    def count_mcqs(self, subject: str = "", topic: str = "", search: str = "") -> int:
+        sql, params = self._mcqs_filter_sql(subject, topic, search)
+        sql = sql.replace("SELECT *", "SELECT COUNT(*)", 1)
+        with self._conn() as conn:
+            return conn.execute(sql, params).fetchone()[0]
+
+    @staticmethod
+    def _mcqs_filter_sql(subject: str, topic: str, search: str):
         sql = "SELECT * FROM mcqs WHERE 1=1"
         params: list = []
         if subject:
@@ -150,10 +178,12 @@ class SQLiteRepository(AbstractRepository):
         if topic:
             sql += " AND topic=?"
             params.append(topic)
-        sql += " ORDER BY created_at DESC"
-        with self._conn() as conn:
-            rows = conn.execute(sql, params).fetchall()
-        return [self._row_to_mcq(r) for r in rows]
+        if search:
+            sql += (" AND (question LIKE ? OR option_a LIKE ? OR option_b LIKE ?"
+                    " OR option_c LIKE ? OR option_d LIKE ? OR subject LIKE ? OR topic LIKE ?)")
+            like = f"%{search}%"
+            params.extend([like, like, like, like, like, like, like])
+        return sql, params
 
     def get_due_mcqs(self, limit: int = 20, subject: str = "", topic: str = "") -> list[MCQ]:
         today = date.today().isoformat()
