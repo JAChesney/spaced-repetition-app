@@ -103,6 +103,8 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                                 bgcolor=T.BORDER,
                             ),
                             alignment=ft.Alignment.CENTER,
+                            width=120,
+                            height=120,
                         ),
                         ft.Container(
                             content=ft.Column(
@@ -116,9 +118,11 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                                     ft.Text("GOAL", size=11, color=T.TEXT2),
                                 ],
                                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                alignment=ft.MainAxisAlignment.CENTER,
                                 spacing=0,
                             ),
-                            alignment=ft.Alignment.CENTER,
+                            left=0,
+                            top=0,
                             width=120,
                             height=120,
                         ),
