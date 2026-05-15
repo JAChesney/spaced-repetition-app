@@ -1,6 +1,18 @@
 import flet as ft
-from core.database import SQLiteRepository
+import os
+from dotenv import load_dotenv
+from core.database import CachedRepository
 from core import theme as T
+
+load_dotenv()
+
+_NAV_ITEMS = [
+    ("Dashboard", ft.Icons.GRID_VIEW_OUTLINED,      ft.Icons.GRID_VIEW_ROUNDED),
+    ("Library",   ft.Icons.LIBRARY_BOOKS_OUTLINED,  ft.Icons.LIBRARY_BOOKS),
+    ("Import",    ft.Icons.UPLOAD_FILE_OUTLINED,     ft.Icons.UPLOAD_FILE),
+    ("Study",     ft.Icons.PSYCHOLOGY_OUTLINED,      ft.Icons.PSYCHOLOGY),
+]
+_TAB_ROUTES = ["dashboard", "library", "import", "study"]
 
 
 def main(page: ft.Page):
@@ -11,66 +23,79 @@ def main(page: ft.Page):
     page.window.min_width = 360
     page.window.min_height = 640
 
-    repo = SQLiteRepository("mcqs.db")
-    content = ft.Column(expand=True, spacing=0)
-
-    nav_bar = ft.NavigationBar(
-        destinations=[
-            ft.NavigationBarDestination(
-                icon=ft.Icons.GRID_VIEW_OUTLINED,
-                selected_icon=ft.Icons.GRID_VIEW_ROUNDED,
-                label="Dashboard",
-            ),
-            ft.NavigationBarDestination(
-                icon=ft.Icons.LIBRARY_BOOKS_OUTLINED,
-                selected_icon=ft.Icons.LIBRARY_BOOKS,
-                label="Library",
-            ),
-            ft.NavigationBarDestination(
-                icon=ft.Icons.UPLOAD_FILE_OUTLINED,
-                selected_icon=ft.Icons.UPLOAD_FILE,
-                label="Import",
-            ),
-            ft.NavigationBarDestination(
-                icon=ft.Icons.PSYCHOLOGY_OUTLINED,
-                selected_icon=ft.Icons.PSYCHOLOGY,
-                label="Study",
-            ),
-        ],
-        selected_index=0,
-        bgcolor="#0F1729",
-        indicator_color=ft.Colors.with_opacity(0.2, T.ACCENT),
-        label_behavior=ft.NavigationBarLabelBehavior.ALWAYS_SHOW,
-        on_change=lambda e: _tab_navigate(e.control.selected_index),
+    repo = CachedRepository(
+        supabase_url=os.environ["SUPABASE_URL"],
+        supabase_key=os.environ["SUPABASE_KEY"],
     )
+    content = ft.Column(expand=True, spacing=0)
+    selected_index = [0]
+
+    def _build_nav():
+        def _item(i, label, icon, sel_icon):
+            active = i == selected_index[0]
+            return ft.GestureDetector(
+                content=ft.Column(
+                    [
+                        ft.Container(
+                            content=ft.Icon(
+                                sel_icon if active else icon,
+                                color=T.ACCENT if active else T.TEXT2,
+                                size=24,
+                            ),
+                            bgcolor=ft.Colors.with_opacity(0.15, T.ACCENT) if active else ft.Colors.TRANSPARENT,
+                            border_radius=14,
+                            padding=ft.Padding.symmetric(vertical=3, horizontal=14),
+                        ),
+                        ft.Text(label, size=10,
+                                color=T.ACCENT if active else T.TEXT2,
+                                weight=ft.FontWeight.W_600 if active else ft.FontWeight.NORMAL),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=2,
+                ),
+                on_tap=lambda _, idx=i: navigate(_TAB_ROUTES[idx]),
+                expand=True,
+            )
+
+        return ft.Container(
+            content=ft.Row(
+                [_item(i, lbl, ico, sel) for i, (lbl, ico, sel) in enumerate(_NAV_ITEMS)],
+                alignment=ft.MainAxisAlignment.SPACE_AROUND,
+                expand=True,
+            ),
+            bgcolor="#0F1729",
+            padding=ft.Padding(left=4, right=4, top=6, bottom=10),
+        )
+
+    nav_container = ft.Container(content=_build_nav(), bgcolor="#0F1729")
 
     def navigate(route: str, data=None):
         content.controls.clear()
 
         if route == "dashboard":
-            nav_bar.selected_index = 0
+            selected_index[0] = 0
             import views.dashboard as v
             content.controls.append(v.build(page, repo, navigate))
 
         elif route == "library":
-            nav_bar.selected_index = 1
+            selected_index[0] = 1
             import views.library as v
             content.controls.append(v.build(page, repo, navigate))
 
         elif route == "import":
-            nav_bar.selected_index = 2
+            selected_index[0] = 2
             import views.import_view as v
             content.controls.append(v.build(page, repo, navigate))
 
         elif route == "study":
-            nav_bar.selected_index = 3
+            selected_index[0] = 3
             subject = data.get("subject", "") if isinstance(data, dict) else ""
             topic = data.get("topic", "") if isinstance(data, dict) else ""
             import views.study as v
             content.controls.append(v.build(page, repo, navigate, subject=subject, topic=topic))
 
         elif route == "complete":
-            nav_bar.selected_index = 3
+            selected_index[0] = 3
             import views.study as v
             content.controls.append(v.build_complete(repo, navigate))
 
@@ -88,13 +113,11 @@ def main(page: ft.Page):
                 v.build(page, repo, navigate, on_edit=lambda m: navigate("edit", data=m))
             )
 
+        nav_container.content = _build_nav()
         page.update()
 
-    def _tab_navigate(index: int):
-        navigate(["dashboard", "library", "import", "study"][index])
-
     navigate("dashboard")
-    page.add(ft.Column([content, nav_bar], spacing=0, expand=True))
+    page.add(ft.Column([content, nav_container], spacing=0, expand=True))
 
 
 if __name__ == "__main__":
