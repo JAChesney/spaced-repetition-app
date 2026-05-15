@@ -9,6 +9,20 @@ from typing import Optional
 from .models import MCQ, CardProgress, ReviewLog
 
 
+def _norm_dt(val) -> Optional[str]:
+    """Convert a Supabase ISO timestamp to a naive UTC string SQLite can store."""
+    if not val:
+        return None
+    s = str(val).replace("Z", "+00:00")
+    # Strip timezone offset so datetime.fromisoformat works on all Python 3.7+
+    for sep in ("+", "-"):
+        idx = s.rfind(sep, 10)
+        if idx != -1:
+            s = s[:idx]
+            break
+    return s.replace("T", " ")
+
+
 class AbstractRepository(ABC):
     @abstractmethod
     def add_mcq(self, mcq: MCQ) -> MCQ: ...
@@ -444,3 +458,247 @@ class SQLiteRepository(AbstractRepository):
             last_reviewed_at=datetime.fromisoformat(row["last_reviewed_at"])
             if row["last_reviewed_at"] else None,
         )
+
+
+class CachedRepository(AbstractRepository):
+    """Supabase is the source of truth; SQLite is a local read cache.
+
+    On startup, pulls all data from Supabase into SQLite.
+    All reads go to SQLite (fast, works offline).
+    All writes go to Supabase first, then are mirrored to SQLite.
+    """
+
+    def __init__(self, supabase_url: str, supabase_key: str, db_path: str = "mcqs.db"):
+        from supabase import create_client
+        self._sb = create_client(supabase_url, supabase_key)
+        self._local = SQLiteRepository(db_path)
+        try:
+            self._sync_from_supabase()
+        except Exception:
+            pass  # offline — use stale local cache
+
+    # ── Sync ─────────────────────────────────────────────────────────────
+
+    def _sync_from_supabase(self) -> None:
+        mcqs = self._sb.table("mcqs").select("*").execute().data
+        progress = self._sb.table("card_progress").select("*").execute().data
+        logs = self._sb.table("review_logs").select("*").execute().data
+
+        # If Supabase is empty but local has data, push local up instead of wiping it
+        if not mcqs and self._local.count_mcqs() > 0:
+            self._migrate_local_to_supabase()
+            return
+
+        with self._local._conn() as conn:
+            # Delete in child-first order to satisfy foreign key constraints
+            conn.execute("DELETE FROM review_logs")
+            conn.execute("DELETE FROM card_progress")
+            conn.execute("DELETE FROM mcqs")
+            for m in mcqs:
+                conn.execute(
+                    """INSERT INTO mcqs (id, question, option_a, option_b, option_c, option_d,
+                       correct_answer, subject, topic, explanation, created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    (m["id"], m["question"], m["option_a"], m["option_b"], m["option_c"],
+                     m["option_d"], m["correct_answer"], m.get("subject") or "",
+                     m.get("topic") or "", m.get("explanation") or "",
+                     _norm_dt(m.get("created_at"))),
+                )
+            for p in progress:
+                conn.execute(
+                    """INSERT INTO card_progress
+                       (id, mcq_id, ease_factor, interval_days, repetitions,
+                        next_review_date, last_reviewed_at)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (p["id"], p["mcq_id"], p["ease_factor"], p["interval_days"],
+                     p["repetitions"], p.get("next_review_date"),
+                     _norm_dt(p.get("last_reviewed_at"))),
+                )
+            for lg in logs:
+                conn.execute(
+                    """INSERT INTO review_logs (id, mcq_id, quality, was_correct, reviewed_at)
+                       VALUES (?,?,?,?,?)""",
+                    (lg["id"], lg["mcq_id"], lg["quality"], int(lg["was_correct"]),
+                     _norm_dt(lg.get("reviewed_at"))),
+                )
+
+    def _migrate_local_to_supabase(self) -> None:
+        """Push existing local SQLite data up to Supabase (first-time migration)."""
+        local_mcqs = self._local.list_mcqs()
+        id_map: dict[int, int] = {}  # old local id → new supabase id
+
+        for mcq in local_mcqs:
+            row = self._sb.table("mcqs").insert({
+                "question": mcq.question, "option_a": mcq.option_a, "option_b": mcq.option_b,
+                "option_c": mcq.option_c, "option_d": mcq.option_d,
+                "correct_answer": mcq.correct_answer, "subject": mcq.subject,
+                "topic": mcq.topic, "explanation": mcq.explanation,
+            }).execute().data[0]
+            id_map[mcq.id] = row["id"]
+
+        with self._local._conn() as conn:
+            # Remap local IDs to Supabase-assigned IDs
+            for old_id, new_id in id_map.items():
+                conn.execute("UPDATE mcqs SET id=? WHERE id=?", (new_id, old_id))
+            progress_rows = conn.execute("SELECT * FROM card_progress").fetchall()
+            log_rows = conn.execute("SELECT * FROM review_logs").fetchall()
+
+        for p in progress_rows:
+            new_mcq_id = id_map.get(p["mcq_id"], p["mcq_id"])
+            self._sb.table("card_progress").insert({
+                "mcq_id": new_mcq_id,
+                "ease_factor": p["ease_factor"],
+                "interval_days": p["interval_days"],
+                "repetitions": p["repetitions"],
+                "next_review_date": p["next_review_date"],
+                "last_reviewed_at": p["last_reviewed_at"],
+            }).execute()
+
+        for lg in log_rows:
+            new_mcq_id = id_map.get(lg["mcq_id"], lg["mcq_id"])
+            self._sb.table("review_logs").insert({
+                "mcq_id": new_mcq_id,
+                "quality": lg["quality"],
+                "was_correct": bool(lg["was_correct"]),
+                "reviewed_at": lg["reviewed_at"],
+            }).execute()
+
+    # ── Reads → local SQLite ──────────────────────────────────────────────
+
+    def get_mcq(self, mcq_id: int) -> Optional[MCQ]:
+        return self._local.get_mcq(mcq_id)
+
+    def list_mcqs(self, subject: str = "", topic: str = "", search: str = "",
+                  limit: int = 0, offset: int = 0) -> list[MCQ]:
+        return self._local.list_mcqs(subject, topic, search, limit, offset)
+
+    def count_mcqs(self, subject: str = "", topic: str = "", search: str = "") -> int:
+        return self._local.count_mcqs(subject, topic, search)
+
+    def get_due_mcqs(self, limit: int = 20, subject: str = "", topic: str = "") -> list[MCQ]:
+        return self._local.get_due_mcqs(limit, subject, topic)
+
+    def get_new_mcqs(self, limit: int = 20, subject: str = "", topic: str = "") -> list[MCQ]:
+        return self._local.get_new_mcqs(limit, subject, topic)
+
+    def get_subject_stats(self) -> list[dict]:
+        return self._local.get_subject_stats()
+
+    def get_topic_stats(self, subject: str) -> list[dict]:
+        return self._local.get_topic_stats(subject)
+
+    def get_recent_subject_activity(self, limit: int = 3) -> list[dict]:
+        return self._local.get_recent_subject_activity(limit)
+
+    def get_progress(self, mcq_id: int) -> Optional[CardProgress]:
+        return self._local.get_progress(mcq_id)
+
+    def get_stats(self) -> dict:
+        return self._local.get_stats()
+
+    def list_subjects(self) -> list[str]:
+        return self._local.list_subjects()
+
+    def list_topics(self, subject: str = "") -> list[str]:
+        return self._local.list_topics(subject)
+
+    # ── Writes → Supabase first, then mirror to local ─────────────────────
+
+    def add_mcq(self, mcq: MCQ) -> MCQ:
+        row = self._sb.table("mcqs").insert({
+            "question": mcq.question, "option_a": mcq.option_a, "option_b": mcq.option_b,
+            "option_c": mcq.option_c, "option_d": mcq.option_d,
+            "correct_answer": mcq.correct_answer, "subject": mcq.subject,
+            "topic": mcq.topic, "explanation": mcq.explanation,
+        }).execute().data[0]
+        mcq.id = row["id"]
+        created = _norm_dt(row.get("created_at"))
+        mcq.created_at = datetime.fromisoformat(created) if created else datetime.now()
+        with self._local._conn() as conn:
+            conn.execute(
+                """INSERT INTO mcqs (id, question, option_a, option_b, option_c, option_d,
+                   correct_answer, subject, topic, explanation, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (mcq.id, mcq.question, mcq.option_a, mcq.option_b, mcq.option_c, mcq.option_d,
+                 mcq.correct_answer, mcq.subject, mcq.topic, mcq.explanation, created),
+            )
+        return mcq
+
+    def update_mcq(self, mcq: MCQ) -> MCQ:
+        self._sb.table("mcqs").update({
+            "question": mcq.question, "option_a": mcq.option_a, "option_b": mcq.option_b,
+            "option_c": mcq.option_c, "option_d": mcq.option_d,
+            "correct_answer": mcq.correct_answer, "subject": mcq.subject,
+            "topic": mcq.topic, "explanation": mcq.explanation,
+        }).eq("id", mcq.id).execute()
+        return self._local.update_mcq(mcq)
+
+    def delete_mcq(self, mcq_id: int) -> None:
+        self._sb.table("mcqs").delete().eq("id", mcq_id).execute()
+        self._local.delete_mcq(mcq_id)
+
+    def save_progress(self, progress: CardProgress) -> CardProgress:
+        data = {
+            "mcq_id": progress.mcq_id,
+            "ease_factor": progress.ease_factor,
+            "interval_days": progress.interval_days,
+            "repetitions": progress.repetitions,
+            "next_review_date": progress.next_review_date.isoformat(),
+            "last_reviewed_at": (
+                progress.last_reviewed_at.isoformat() if progress.last_reviewed_at else None
+            ),
+        }
+        existing = (
+            self._sb.table("card_progress")
+            .select("id").eq("mcq_id", progress.mcq_id).execute().data
+        )
+        if existing:
+            row = (
+                self._sb.table("card_progress")
+                .update(data).eq("mcq_id", progress.mcq_id).execute().data[0]
+            )
+        else:
+            row = self._sb.table("card_progress").insert(data).execute().data[0]
+        progress.id = row["id"]
+        with self._local._conn() as conn:
+            exists_local = conn.execute(
+                "SELECT id FROM card_progress WHERE mcq_id=?", (progress.mcq_id,)
+            ).fetchone()
+            if exists_local:
+                conn.execute(
+                    """UPDATE card_progress SET ease_factor=?, interval_days=?,
+                       repetitions=?, next_review_date=?, last_reviewed_at=?
+                       WHERE mcq_id=?""",
+                    (progress.ease_factor, progress.interval_days, progress.repetitions,
+                     progress.next_review_date.isoformat(),
+                     progress.last_reviewed_at.isoformat() if progress.last_reviewed_at else None,
+                     progress.mcq_id),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO card_progress
+                       (id, mcq_id, ease_factor, interval_days, repetitions,
+                        next_review_date, last_reviewed_at)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (progress.id, progress.mcq_id, progress.ease_factor, progress.interval_days,
+                     progress.repetitions, progress.next_review_date.isoformat(),
+                     progress.last_reviewed_at.isoformat() if progress.last_reviewed_at else None),
+                )
+        return progress
+
+    def add_review_log(self, log: ReviewLog) -> ReviewLog:
+        row = self._sb.table("review_logs").insert({
+            "mcq_id": log.mcq_id,
+            "quality": log.quality,
+            "was_correct": log.was_correct,
+            "reviewed_at": log.reviewed_at.isoformat(),
+        }).execute().data[0]
+        log.id = row["id"]
+        with self._local._conn() as conn:
+            conn.execute(
+                """INSERT INTO review_logs (id, mcq_id, quality, was_correct, reviewed_at)
+                   VALUES (?,?,?,?,?)""",
+                (log.id, log.mcq_id, log.quality, int(log.was_correct),
+                 log.reviewed_at.isoformat()),
+            )
+        return log

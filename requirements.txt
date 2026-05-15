@@ -1,4 +1,6 @@
 anyio==4.13.0
+python-dotenv
+supabase
 certifi==2026.4.22
 flet==0.84.0
 flet-charts==0.84.0
