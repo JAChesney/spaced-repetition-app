@@ -304,7 +304,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                 ),
             ],
         ),
-        padding=ft.Padding.symmetric(horizontal=20, vertical=14),
+        padding=ft.Padding(left=0, right=0, top=8, bottom=8),
     )
 
     return ft.Column(
@@ -331,4 +331,5 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
         ],
         spacing=0,
         expand=True,
+        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
     )

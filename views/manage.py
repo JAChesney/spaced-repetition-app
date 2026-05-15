@@ -52,9 +52,13 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, on_edit) -> ft.Cont
         refresh()
 
     def confirm_delete(mcq: MCQ):
+        def close_dlg(_=None):
+            dlg.open = False
+            page.update()
+
         def do_delete(_):
             repo.delete_mcq(mcq.id)
-            page.close(dlg)
+            close_dlg()
             refresh()
 
         dlg = ft.AlertDialog(
@@ -62,12 +66,14 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, on_edit) -> ft.Cont
             title=ft.Text("Delete MCQ?"),
             content=ft.Text("This cannot be undone."),
             actions=[
-                ft.TextButton("Cancel", on_click=lambda _: page.close(dlg)),
+                ft.TextButton("Cancel", on_click=close_dlg),
                 ft.TextButton("Delete", on_click=do_delete,
                               style=ft.ButtonStyle(color=ft.Colors.ERROR)),
             ],
         )
-        page.open(dlg)
+        page.overlay.append(dlg)
+        dlg.open = True
+        page.update()
 
     def build_card(mcq: MCQ) -> ft.Container:
         options_text = (
