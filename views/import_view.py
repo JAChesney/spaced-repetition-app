@@ -1,14 +1,15 @@
 import csv
 import io
+from datetime import date
 import flet as ft
 from core.database import AbstractRepository
 from core.models import MCQ
 from core import theme as T
 
 TEMPLATE = """\
-question,A,B,C,D,answer,subject,topic,explanation
-What is the powerhouse of the cell?,Nucleus,Mitochondria,Ribosome,Golgi apparatus,B,Biology,Cell Biology,The mitochondria produces ATP through cellular respiration.
-What does DNA stand for?,Deoxyribonucleic acid,Diribonucleic acid,Deoxyriboniclic acid,Distributed nucleic acid,A,Biology,Genetics,DNA stands for Deoxyribonucleic acid and carries genetic information."""
+question,A,B,C,D,answer,subject,topic,subtopic,question_type,date,explanation
+What is the powerhouse of the cell?,Nucleus,Mitochondria,Ribosome,Golgi apparatus,B,Science & Technology,Biology,Cell Biology,STATIC,,The mitochondria produces ATP through cellular respiration.
+Who became the 47th President of USA?,Joe Biden,Donald Trump,Barack Obama,George Bush,B,Current Affairs,National,Appointments,CURRENT_AFFAIRS,2025-01-20,Donald Trump was inaugurated as the 47th US President on Jan 20 2025."""
 
 
 def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
@@ -62,6 +63,19 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                 ans = str(row.get("answer", "")).strip().upper()
                 if ans not in ("A", "B", "C", "D"):
                     raise ValueError(f"'answer' must be A/B/C/D, got '{ans}'")
+
+                q_type = str(row.get("question_type", "STATIC")).strip().upper()
+                if q_type not in ("STATIC", "CURRENT_AFFAIRS"):
+                    q_type = "STATIC"
+
+                raw_date = str(row.get("date", "")).strip()
+                parsed_date = None
+                if raw_date:
+                    try:
+                        parsed_date = date.fromisoformat(raw_date)
+                    except ValueError:
+                        raise ValueError(f"'date' must be YYYY-MM-DD, got '{raw_date}'")
+
                 mcq = MCQ(
                     question=str(row["question"]).strip(),
                     option_a=str(row["A"]).strip(),
@@ -71,7 +85,10 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                     correct_answer=ans,
                     subject=str(row.get("subject", "")).strip(),
                     topic=str(row.get("topic", "")).strip(),
+                    subtopic=str(row.get("subtopic", "")).strip(),
                     explanation=str(row.get("explanation", "")).strip(),
+                    question_type=q_type,
+                    event_date=parsed_date,
                 )
                 repo.add_mcq(mcq)
                 ok += 1
@@ -113,8 +130,10 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                     spacing=8,
                 ),
                 ft.Text(
-                    'Required columns: question, A, B, C, D, answer (must be A/B/C/D).\n'
-                    'Optional columns: subject, topic, explanation.',
+                    'Required: question, A, B, C, D, answer (must be A/B/C/D).\n'
+                    'Optional: subject, topic, subtopic, explanation.\n'
+                    'Optional: question_type (STATIC or CURRENT_AFFAIRS, default STATIC).\n'
+                    'Optional: date (YYYY-MM-DD, for current affairs questions).',
                     color=T.TEXT2,
                     size=12,
                 ),
