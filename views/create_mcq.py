@@ -69,12 +69,19 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
     )
 
     def on_type_change(e):
-        if e.control.value == "CURRENT_AFFAIRS":
+        is_ca = e.control.value == "CURRENT_AFFAIRS"
+        if is_ca:
             date_slot.controls = [date_field]
+            topic_slot.visible = False
+            subtopic_slot.visible = False
         else:
             date_slot.controls = []
             date_field.value = ""
+            topic_slot.visible = True
+            subtopic_slot.visible = True
         date_slot.update()
+        topic_slot.update()
+        subtopic_slot.update()
 
     type_dd = _dd("Question Type *", ["STATIC", "CURRENT_AFFAIRS"],
                   value=init_type, on_change=on_type_change, width=220)
@@ -115,10 +122,12 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
             init_subtopic_dd.value = init_sub
 
     # topic_slot lives inside ft.Row → expand=True = horizontal expansion (correct)
-    topic_slot = ft.Column([init_topic_dd], spacing=0, expand=True)
+    topic_slot = ft.Column([init_topic_dd], spacing=0, expand=True,
+                           visible=init_type != "CURRENT_AFFAIRS")
 
     # subtopic_slot lives directly in outer ft.Column → NO expand (would be vertical = grey block)
-    subtopic_slot = ft.Column([init_subtopic_dd], spacing=0)
+    subtopic_slot = ft.Column([init_subtopic_dd], spacing=0,
+                              visible=init_type != "CURRENT_AFFAIRS")
 
     subject_dd = _dd("Subject *", subjects(),
                      value=init_subj or None,
@@ -138,6 +147,8 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
         success_box.update()
 
     def _topic_value():
+        if type_dd.value == "CURRENT_AFFAIRS":
+            return date_field.value.strip() or None
         dd = topic_slot.controls[0] if topic_slot.controls else None
         return dd.value if dd else None
 
@@ -160,11 +171,15 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
             error_text.value = "Please select a subject."
             error_text.update()
             return False
-        if not _topic_value():
+        if type_dd.value != "CURRENT_AFFAIRS" and not _topic_value():
             error_text.value = "Please select a topic."
             error_text.update()
             return False
         raw = date_field.value.strip()
+        if type_dd.value == "CURRENT_AFFAIRS" and not raw:
+            error_text.value = "Event date is required for Current Affairs."
+            error_text.update()
+            return False
         if raw:
             try:
                 date.fromisoformat(raw)
@@ -213,6 +228,10 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
             date_field.value = ""
             date_slot.controls = []
             date_slot.update()
+            topic_slot.visible = True
+            topic_slot.update()
+            subtopic_slot.visible = True
+            subtopic_slot.update()
             subject_dd.value = None
             subject_dd.update()
             state["subject"] = ""

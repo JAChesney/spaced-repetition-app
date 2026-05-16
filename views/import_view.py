@@ -8,8 +8,8 @@ from core import theme as T
 
 TEMPLATE = """\
 question,A,B,C,D,answer,subject,topic,subtopic,question_type,date,explanation
-What is the powerhouse of the cell?,Nucleus,Mitochondria,Ribosome,Golgi apparatus,B,Science & Technology,Biology,Cell Biology,STATIC,,The mitochondria produces ATP through cellular respiration.
-Who became the 47th President of USA?,Joe Biden,Donald Trump,Barack Obama,George Bush,B,Current Affairs,National,Appointments,CURRENT_AFFAIRS,2025-01-20,Donald Trump was inaugurated as the 47th US President on Jan 20 2025."""
+What is the powerhouse of the cell?,Nucleus,Mitochondria,Ribosome,Golgi apparatus,B,Science,Biology,Cell Biology,STATIC,,The mitochondria produces ATP through cellular respiration.
+Who became the 47th President of USA?,Joe Biden,Donald Trump,Barack Obama,George Bush,B,Current Affairs,,,CURRENT_AFFAIRS,2025-01-20,Donald Trump was inaugurated as the 47th US President on Jan 20 2025."""
 
 
 def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
@@ -76,6 +76,10 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                     except ValueError:
                         raise ValueError(f"'date' must be YYYY-MM-DD, got '{raw_date}'")
 
+                topic = str(row.get("topic", "")).strip()
+                if q_type == "CURRENT_AFFAIRS" and raw_date:
+                    topic = raw_date
+
                 mcq = MCQ(
                     question=str(row["question"]).strip(),
                     option_a=str(row["A"]).strip(),
@@ -84,7 +88,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                     option_d=str(row["D"]).strip(),
                     correct_answer=ans,
                     subject=str(row.get("subject", "")).strip(),
-                    topic=str(row.get("topic", "")).strip(),
+                    topic=topic,
                     subtopic=str(row.get("subtopic", "")).strip(),
                     explanation=str(row.get("explanation", "")).strip(),
                     question_type=q_type,
@@ -133,7 +137,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                     'Required: question, A, B, C, D, answer (must be A/B/C/D).\n'
                     'Optional: subject, topic, subtopic, explanation.\n'
                     'Optional: question_type (STATIC or CURRENT_AFFAIRS, default STATIC).\n'
-                    'Optional: date (YYYY-MM-DD, for current affairs questions).',
+                    'Optional: date (YYYY-MM-DD). For CURRENT_AFFAIRS, date is required and becomes the topic.',
                     color=T.TEXT2,
                     size=12,
                 ),

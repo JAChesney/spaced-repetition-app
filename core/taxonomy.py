@@ -312,6 +312,16 @@ TAXONOMY: dict[str, dict[str, list[str]]] = {
             "Yoga Day",
         ],
     },
+    "Current Affairs": {
+        "National": [],
+        "International": [],
+        "Economy": [],
+        "Science & Technology": [],
+        "Sports": [],
+        "Environment": [],
+        "Defence": [],
+        "Others": [],
+    },
     "Miscellaneous": {
         "Books and Authors": [],
         "Obituaries": [],
