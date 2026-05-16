@@ -101,9 +101,14 @@ class SQLiteRepository(AbstractRepository):
                     correct_answer TEXT NOT NULL CHECK(correct_answer IN ('A','B','C','D')),
                     subject TEXT DEFAULT '',
                     topic TEXT DEFAULT '',
+                    subtopic TEXT DEFAULT '',
                     explanation TEXT DEFAULT '',
+                    question_type TEXT NOT NULL DEFAULT 'STATIC'
+                        CHECK(question_type IN ('STATIC','CURRENT_AFFAIRS')),
+                    event_date TEXT,
                     created_at TEXT DEFAULT (datetime('now'))
                 );
+
 
                 CREATE TABLE IF NOT EXISTS card_progress (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,6 +134,19 @@ class SQLiteRepository(AbstractRepository):
                 CREATE INDEX IF NOT EXISTS idx_cp_next_review ON card_progress(next_review_date);
                 CREATE INDEX IF NOT EXISTS idx_rl_reviewed_at ON review_logs(reviewed_at);
             """)
+            self._migrate_schema(conn)
+
+    def _migrate_schema(self, conn: sqlite3.Connection) -> None:
+        """Add columns introduced after the initial schema (safe to run on any DB version)."""
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(mcqs)").fetchall()}
+        migrations = [
+            ("subtopic",      "ALTER TABLE mcqs ADD COLUMN subtopic TEXT NOT NULL DEFAULT ''"),
+            ("question_type", "ALTER TABLE mcqs ADD COLUMN question_type TEXT NOT NULL DEFAULT 'STATIC'"),
+            ("event_date",    "ALTER TABLE mcqs ADD COLUMN event_date TEXT"),
+        ]
+        for col, sql in migrations:
+            if col not in existing:
+                conn.execute(sql)
 
     # --- MCQ CRUD ---
 
@@ -136,10 +154,13 @@ class SQLiteRepository(AbstractRepository):
         with self._conn() as conn:
             cur = conn.execute(
                 """INSERT INTO mcqs (question, option_a, option_b, option_c, option_d,
-                   correct_answer, subject, topic, explanation)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                   correct_answer, subject, topic, subtopic, explanation,
+                   question_type, event_date)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (mcq.question, mcq.option_a, mcq.option_b, mcq.option_c, mcq.option_d,
-                 mcq.correct_answer, mcq.subject, mcq.topic, mcq.explanation),
+                 mcq.correct_answer, mcq.subject, mcq.topic, mcq.subtopic, mcq.explanation,
+                 mcq.question_type,
+                 mcq.event_date.isoformat() if mcq.event_date else None),
             )
             mcq.id = cur.lastrowid
             mcq.created_at = datetime.now()
@@ -149,10 +170,14 @@ class SQLiteRepository(AbstractRepository):
         with self._conn() as conn:
             conn.execute(
                 """UPDATE mcqs SET question=?, option_a=?, option_b=?, option_c=?,
-                   option_d=?, correct_answer=?, subject=?, topic=?, explanation=?
+                   option_d=?, correct_answer=?, subject=?, topic=?, subtopic=?,
+                   explanation=?, question_type=?, event_date=?
                    WHERE id=?""",
                 (mcq.question, mcq.option_a, mcq.option_b, mcq.option_c, mcq.option_d,
-                 mcq.correct_answer, mcq.subject, mcq.topic, mcq.explanation, mcq.id),
+                 mcq.correct_answer, mcq.subject, mcq.topic, mcq.subtopic, mcq.explanation,
+                 mcq.question_type,
+                 mcq.event_date.isoformat() if mcq.event_date else None,
+                 mcq.id),
             )
         return mcq
 
@@ -429,6 +454,7 @@ class SQLiteRepository(AbstractRepository):
 
     @staticmethod
     def _row_to_mcq(row) -> MCQ:
+        event_date_raw = row["event_date"] if "event_date" in row.keys() else None
         return MCQ(
             id=row["id"],
             question=row["question"],
@@ -437,9 +463,12 @@ class SQLiteRepository(AbstractRepository):
             option_c=row["option_c"],
             option_d=row["option_d"],
             correct_answer=row["correct_answer"],
-            subject=row["subject"],
-            topic=row["topic"],
-            explanation=row["explanation"],
+            subject=row["subject"] or "",
+            topic=row["topic"] or "",
+            subtopic=row["subtopic"] if "subtopic" in row.keys() else "",
+            explanation=row["explanation"] or "",
+            question_type=row["question_type"] if "question_type" in row.keys() else "STATIC",
+            event_date=date.fromisoformat(event_date_raw) if event_date_raw else None,
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
         )
 
@@ -494,11 +523,15 @@ class CachedRepository(AbstractRepository):
             for m in mcqs:
                 conn.execute(
                     """INSERT INTO mcqs (id, question, option_a, option_b, option_c, option_d,
-                       correct_answer, subject, topic, explanation, created_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                       correct_answer, subject, topic, subtopic, explanation,
+                       question_type, event_date, created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (m["id"], m["question"], m["option_a"], m["option_b"], m["option_c"],
                      m["option_d"], m["correct_answer"], m.get("subject") or "",
-                     m.get("topic") or "", m.get("explanation") or "",
+                     m.get("topic") or "", m.get("subtopic") or "",
+                     m.get("explanation") or "",
+                     m.get("question_type") or "STATIC",
+                     m.get("event_date"),
                      _norm_dt(m.get("created_at"))),
                 )
             for p in progress:
@@ -529,7 +562,9 @@ class CachedRepository(AbstractRepository):
                 "question": mcq.question, "option_a": mcq.option_a, "option_b": mcq.option_b,
                 "option_c": mcq.option_c, "option_d": mcq.option_d,
                 "correct_answer": mcq.correct_answer, "subject": mcq.subject,
-                "topic": mcq.topic, "explanation": mcq.explanation,
+                "topic": mcq.topic, "subtopic": mcq.subtopic, "explanation": mcq.explanation,
+                "question_type": mcq.question_type,
+                "event_date": mcq.event_date.isoformat() if mcq.event_date else None,
             }).execute().data[0]
             id_map[mcq.id] = row["id"]
 
@@ -606,7 +641,9 @@ class CachedRepository(AbstractRepository):
             "question": mcq.question, "option_a": mcq.option_a, "option_b": mcq.option_b,
             "option_c": mcq.option_c, "option_d": mcq.option_d,
             "correct_answer": mcq.correct_answer, "subject": mcq.subject,
-            "topic": mcq.topic, "explanation": mcq.explanation,
+            "topic": mcq.topic, "subtopic": mcq.subtopic, "explanation": mcq.explanation,
+            "question_type": mcq.question_type,
+            "event_date": mcq.event_date.isoformat() if mcq.event_date else None,
         }).execute().data[0]
         mcq.id = row["id"]
         created = _norm_dt(row.get("created_at"))
@@ -614,10 +651,14 @@ class CachedRepository(AbstractRepository):
         with self._local._conn() as conn:
             conn.execute(
                 """INSERT INTO mcqs (id, question, option_a, option_b, option_c, option_d,
-                   correct_answer, subject, topic, explanation, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                   correct_answer, subject, topic, subtopic, explanation,
+                   question_type, event_date, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (mcq.id, mcq.question, mcq.option_a, mcq.option_b, mcq.option_c, mcq.option_d,
-                 mcq.correct_answer, mcq.subject, mcq.topic, mcq.explanation, created),
+                 mcq.correct_answer, mcq.subject, mcq.topic, mcq.subtopic, mcq.explanation,
+                 mcq.question_type,
+                 mcq.event_date.isoformat() if mcq.event_date else None,
+                 created),
             )
         return mcq
 
@@ -626,7 +667,9 @@ class CachedRepository(AbstractRepository):
             "question": mcq.question, "option_a": mcq.option_a, "option_b": mcq.option_b,
             "option_c": mcq.option_c, "option_d": mcq.option_d,
             "correct_answer": mcq.correct_answer, "subject": mcq.subject,
-            "topic": mcq.topic, "explanation": mcq.explanation,
+            "topic": mcq.topic, "subtopic": mcq.subtopic, "explanation": mcq.explanation,
+            "question_type": mcq.question_type,
+            "event_date": mcq.event_date.isoformat() if mcq.event_date else None,
         }).eq("id", mcq.id).execute()
         return self._local.update_mcq(mcq)
 

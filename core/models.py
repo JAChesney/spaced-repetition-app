@@ -10,10 +10,13 @@ class MCQ:
     option_b: str
     option_c: str
     option_d: str
-    correct_answer: str  # "A", "B", "C", or "D"
+    correct_answer: str          # "A", "B", "C", or "D"
     subject: str = ""
     topic: str = ""
+    subtopic: str = ""           # optional
     explanation: str = ""
+    question_type: str = "STATIC"   # "STATIC" or "CURRENT_AFFAIRS"
+    event_date: Optional[date] = None  # for CURRENT_AFFAIRS only
     id: Optional[int] = None
     created_at: Optional[datetime] = None
 
