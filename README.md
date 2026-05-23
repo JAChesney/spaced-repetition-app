@@ -1,23 +1,33 @@
 # StudyFlow — Spaced Repetition MCQ App
 
-A desktop application for exam preparation using multiple-choice questions (MCQs) and the SM-2 spaced repetition algorithm. Built with Python and [Flet](https://flet.dev/) (Flutter for Python).
+<p align="center">
+  <img src="assets/icon.png" width="120" alt="StudyFlow icon" />
+</p>
+
+A cross-platform application for exam preparation using multiple-choice questions (MCQs) and the **SM-2 spaced repetition algorithm**. Built with Python and [Flet](https://flet.dev/) (Flutter for Python), with **Supabase** as the cloud backend and **SQLite** as a local cache.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Flet](https://img.shields.io/badge/flet-0.84.0-purple)
+![Supabase](https://img.shields.io/badge/supabase-cloud-green)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
 ## Features
 
-- **Spaced repetition scheduling** — SM-2 algorithm adjusts review intervals based on how well you know each card
-- **Difficulty ratings** — Rate each answer as Again / Hard / Good / Easy to influence future scheduling
-- **Subject & topic organization** — Group MCQs by subject and topic for targeted study sessions
+- **Spaced repetition scheduling** — SM-2 algorithm adjusts review intervals based on recall quality
+- **Difficulty ratings** — Rate each answer as Again / Hard / Good / Easy
+- **Structured taxonomy** — Subject → Topic → Subtopic cascading organisation across 13 subjects
+- **Current Affairs mode** — Special subject where the event date is used as the topic for date-based recall
+- **Static & Current Affairs question types** — Tag each MCQ as `STATIC` or `CURRENT_AFFAIRS`
 - **Daily progress tracking** — Set a daily review goal and track your streak
 - **Bulk CSV import** — Add hundreds of questions at once from a CSV file
-- **MCQ editor** — Create, edit, and delete questions individually
-- **Search & filter** — Find questions by keyword or subject
+- **MCQ editor** — Create, edit, and delete questions individually with full field support
+- **Search & filter** — Find questions by keyword, subject, or topic
+- **Paginated library** — Fast browsing even with thousands of questions
+- **Cloud sync** — Supabase is the source of truth; SQLite caches data locally for offline speed
 - **Dark mode UI** — Clean, readable interface built for long study sessions
+- **Custom app icon** — Branded icon shown in the window title bar and Android launcher
 
 ---
 
@@ -32,10 +42,12 @@ A desktop application for exam preparation using multiple-choice questions (MCQs
 | Layer | Technology |
 |-------|------------|
 | UI Framework | [Flet](https://flet.dev/) 0.84.0 (Flutter for Python) |
-| Database | SQLite (via `sqlite3` stdlib) |
+| Cloud Database | [Supabase](https://supabase.com/) (PostgreSQL) |
+| Local Cache | SQLite (via `sqlite3` stdlib) |
 | Algorithm | SM-2 Spaced Repetition |
 | Language | Python 3.10+ |
-| Config | JSON (`settings.json`) |
+| HTTP Client | `httpx` via `supabase-py` |
+| Config | `.env` (Supabase credentials) + `settings.json` |
 
 ---
 
@@ -44,15 +56,15 @@ A desktop application for exam preparation using multiple-choice questions (MCQs
 ### Prerequisites
 
 - Python 3.10 or higher
-- `pip` (comes with Python)
+- A [Supabase](https://supabase.com/) account and project
 
 ### Steps
 
 **1. Clone the repository**
 
 ```bash
-git clone https://github.com/your-username/SpacedRepetitionApp.git
-cd SpacedRepetitionApp
+git clone https://github.com/JAChesney/spaced-repetition-app.git
+cd spaced-repetition-app
 ```
 
 **2. Create a virtual environment**
@@ -78,13 +90,24 @@ python -m venv sraenv
 pip install -r requirements.txt
 ```
 
-**5. Run the app**
+**5. Configure environment variables**
+
+Create a `.env` file in the project root:
+
+```env
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_KEY=your-anon-or-service-role-key
+```
+
+You can find these in your Supabase project under **Settings → API**.
+
+**6. Run the app**
 
 ```bash
 python main.py
 ```
 
-The app window will open automatically.
+The app window will open automatically. On first launch it pulls all data from Supabase into the local SQLite cache.
 
 ---
 
@@ -92,24 +115,43 @@ The app window will open automatically.
 
 ```
 SpacedRepetitionApp/
-├── main.py                  # App entry point, routing
+├── main.py                  # App entry point, page setup, routing
 ├── requirements.txt         # Python dependencies
-├── settings.json            # User configuration (auto-created)
-├── mcqs.db                  # SQLite database (auto-created at runtime)
+├── settings.json            # User configuration (gitignored, auto-created)
+├── .env                     # Supabase credentials (gitignored)
+├── assets/
+│   ├── icon.png             # Source app icon (1024×1024, used for Android builds)
+│   └── icon.ico             # Windows desktop icon (multi-size 16–256px)
 ├── core/
-│   ├── database.py          # SQLite repository and data access layer
+│   ├── database.py          # Repository layer: AbstractRepository, SQLiteRepository, CachedRepository
 │   ├── models.py            # Data models: MCQ, CardProgress, ReviewLog
 │   ├── spaced_repetition.py # SM-2 algorithm implementation
+│   ├── taxonomy.py          # Subject → Topic → Subtopic definitions (13 subjects)
 │   ├── settings.py          # Settings loader and saver
-│   └── theme.py             # UI theme colors and styling
+│   └── theme.py             # UI theme colours and styling constants
 └── views/
-    ├── dashboard.py         # Home screen with daily progress
+    ├── dashboard.py         # Home screen with daily progress and due-card summary
     ├── library.py           # Browse subjects and topics
-    ├── study.py             # Interactive study session
-    ├── create_mcq.py        # Create / edit MCQ form
-    ├── import_view.py       # Bulk CSV import
-    └── manage.py            # Search and manage all MCQs
+    ├── study.py             # Interactive study session with SM-2 rating
+    ├── create_mcq.py        # Create / edit MCQ form (with cascading dropdowns)
+    ├── import_view.py       # Bulk CSV import with template download
+    └── manage.py            # Paginated search and manage all MCQs
 ```
+
+---
+
+## Data Architecture
+
+```
+Supabase (source of truth)
+        ↕  sync on startup + every write
+SQLite local cache  ←  all reads (fast, offline)
+```
+
+`CachedRepository` in `core/database.py` wraps both:
+- **Writes** go to Supabase first, then mirror to SQLite
+- **Reads** always hit SQLite for low-latency UI
+- **On startup**, all Supabase data is pulled into the local cache
 
 ---
 
@@ -138,12 +180,43 @@ SpacedRepetitionApp/
 To bulk-import questions, create a CSV with these columns:
 
 ```
-question,option_a,option_b,option_c,option_d,correct_answer,subject,topic,explanation
+question,option_a,option_b,option_c,option_d,correct_answer,subject,topic,subtopic,explanation,question_type,event_date
 ```
 
-- `correct_answer` must be one of: `A`, `B`, `C`, or `D`
-- `explanation` is optional but recommended
-- Download the template from within the app (Import screen)
+| Column | Required | Notes |
+|--------|----------|-------|
+| `question` | ✅ | The MCQ question text |
+| `option_a` – `option_d` | ✅ | Answer choices |
+| `correct_answer` | ✅ | One of: `A`, `B`, `C`, `D` |
+| `subject` | ✅ | Must match a subject in the taxonomy |
+| `topic` | ✅ | Must match a topic under the subject |
+| `subtopic` | ❌ | Optional further classification |
+| `explanation` | ❌ | Shown after answering |
+| `question_type` | ❌ | `STATIC` (default) or `CURRENT_AFFAIRS` |
+| `event_date` | ❌ | `YYYY-MM-DD` — required for `CURRENT_AFFAIRS` questions |
+
+A template CSV can be downloaded from within the app on the **Import** screen.
+
+---
+
+## Question Types
+
+| Type | Description |
+|------|-------------|
+| `STATIC` | Standard MCQ — subject/topic/subtopic classification |
+| `CURRENT_AFFAIRS` | News-based MCQ — `event_date` is used as the topic for date-based recall |
+
+For **Current Affairs** questions, the event date (e.g. `2026-05-23`) is automatically stored as the topic so you can filter and study by date.
+
+---
+
+## Taxonomy
+
+The app includes a built-in taxonomy of **13 subjects** with topics and subtopics:
+
+History, Geography, Polity, Economy, Science, International Relations, Defence, Art and Culture, Sports, Awards and Honours, Important Days, Current Affairs, Miscellaneous
+
+Subjects, topics, and subtopics are defined in `core/taxonomy.py` and drive the cascading dropdowns in the MCQ editor.
 
 ---
 
@@ -162,13 +235,29 @@ Ease factor is bounded between **1.3** and **3.0**.
 
 ---
 
+## Building for Android
+
+Flet can package the app as an Android APK using Flutter under the hood.
+
+**Prerequisites:** [Flutter SDK](https://flutter.dev/docs/get-started/install) and Android SDK installed.
+
+```bash
+flet build apk
+```
+
+The build system automatically detects `assets/icon.png` as the launcher icon and generates all Android mipmap sizes. No `--icon` flag needed.
+
+The generated APK will be in `build/apk/`.
+
+---
+
 ## Contributing
 
 1. Fork the repo
 2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Commit your changes: `git commit -m "Add your feature"`
+3. Commit your changes: `git commit -m "feat: describe your change"`
 4. Push the branch: `git push origin feature/your-feature`
-5. Open a Pull Request
+5. Open a Pull Request against `main`
 
 ---
 
