@@ -42,6 +42,9 @@ pip-delete-this-directory.txt
 .env.*
 *.env
 
+# ── Claude Code (local AI assistant memory) ─────────────────────────
+.claude/
+
 # ── IDE and editor files ─────────────────────────────────────────────
 .vscode/
 .idea/

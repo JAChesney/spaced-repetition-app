@@ -23,10 +23,7 @@ def main(page: ft.Page):
     page.window.min_width = 360
     page.window.min_height = 640
 
-    repo = CachedRepository(
-        supabase_url=os.environ["SUPABASE_URL"],
-        supabase_key=os.environ["SUPABASE_KEY"],
-    )
+    repo = SQLiteRepository("mcqs.db")
     content = ft.Column(expand=True, spacing=0)
     selected_index = [0]
 
