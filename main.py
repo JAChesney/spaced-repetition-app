@@ -23,6 +23,11 @@ def main(page: ft.Page):
     page.window.min_width = 360
     page.window.min_height = 640
 
+    # Set custom app icon (Flet on Windows requires .ico format)
+    _icon_path = os.path.join(os.path.dirname(__file__), "assets", "icon.ico")
+    if os.path.exists(_icon_path):
+        page.window.icon = _icon_path
+
     repo = CachedRepository(
         supabase_url=os.environ["SUPABASE_URL"],
         supabase_key=os.environ["SUPABASE_KEY"],
