@@ -1,0 +1,14 @@
+[project]
+name = "StudyFlow"
+description = "Spaced Repetition MCQ App"
+version = "1.0.0"
+
+# ─── Flet build configuration ─────────────────────────────────────────────────
+[tool.flet]
+product = "StudyFlow"
+
+[tool.flet.android]
+# Adaptive icon background colour — this is the "canvas" behind the foreground SVG.
+# Must match the dark-navy colour used in icon.svg so the icon looks seamless
+# on every device icon shape (circle, squircle, rounded-square, etc.).
+adaptive_icon_background = "#162040"
