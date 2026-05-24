@@ -576,11 +576,34 @@ class CachedRepository(AbstractRepository):
 
     def __init__(self, supabase_url: str, supabase_key: str, db_path: str = "mcqs.db"):
         self._sb = _SupabaseClient(supabase_url, supabase_key)
+        self._db_path = db_path
         self._local = SQLiteRepository(db_path)
+        self.last_sync_error: Optional[str] = None
         try:
             self._sync_from_supabase()
-        except Exception:
-            pass  # offline — use stale local cache
+        except Exception as e:
+            # Offline or network error — keep stale local cache and surface the reason
+            self.last_sync_error = str(e)
+
+    def clear_local_cache_and_sync(self) -> None:
+        """Delete the local SQLite file and re-sync from Supabase.
+
+        Call this from a 'Force Sync' button in the UI to recover from a
+        stale local cache without needing to go into Android Settings.
+        """
+        import os
+        # Close existing connection so the file can be deleted
+        if self._local._connection is not None:
+            self._local._connection.close()
+            self._local._connection = None
+        try:
+            os.remove(self._db_path)
+        except FileNotFoundError:
+            pass
+        # Re-initialise the local DB (creates a fresh empty schema)
+        self._local = SQLiteRepository(self._db_path)
+        self.last_sync_error = None
+        self._sync_from_supabase()
 
     # ── Sync ─────────────────────────────────────────────────────────────
 
