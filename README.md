@@ -245,9 +245,20 @@ Flet can package the app as an Android APK using Flutter under the hood.
 flet build apk
 ```
 
-The build system automatically detects `assets/icon.png` as the launcher icon and generates all Android mipmap sizes. No `--icon` flag needed.
-
 The generated APK will be in `build/apk/`.
+
+### App icon (Android Adaptive Icon)
+
+The launcher icon uses Android's **Adaptive Icon** system so it renders crisp at every screen density and on every device icon shape (circle, squircle, rounded-square, etc.).
+
+| File | Purpose |
+|---|---|
+| `assets/icon_android.svg` | **Foreground layer** — the card-and-waves artwork on a transparent canvas. Picked up automatically by `flet build apk` as the Android-specific icon. |
+| `assets/icon.svg` | Full icon with background — used as the fallback for other platforms (web, desktop). |
+| `assets/icon.png` | Legacy raster fallback (1024 × 1024) — kept for Windows desktop. |
+| `pyproject.toml` → `tool.flet.android.adaptive_icon_background` | Sets the background layer colour (`#162040`, dark navy) so the foreground blends seamlessly against every device shape. |
+
+`flutter_launcher_icons` **0.14.4** (bundled with Flet 0.84) supports SVG foreground layers natively — no manual mipmap generation needed.
 
 ---
 
