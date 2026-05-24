@@ -9,6 +9,83 @@ from typing import Optional
 from .models import MCQ, CardProgress, ReviewLog
 
 
+# ── Minimal Supabase REST client (replaces the 'supabase' pip package) ────────
+# Uses httpx directly so it bundles cleanly on Android.
+
+class _Table:
+    """PostgREST query builder that mirrors the supabase-py interface."""
+
+    def __init__(self, base_url: str, name: str, headers: dict):
+        self._url = f"{base_url}/rest/v1/{name}"
+        self._headers = headers
+        self._params: dict = {}
+        self._method = "GET"
+        self._body = None
+
+    def select(self, columns: str = "*"):
+        self._method = "GET"
+        self._params["select"] = columns
+        return self
+
+    def insert(self, data: dict):
+        self._method = "POST"
+        self._body = data
+        return self
+
+    def update(self, data: dict):
+        self._method = "PATCH"
+        self._body = data
+        return self
+
+    def delete(self):
+        self._method = "DELETE"
+        return self
+
+    def eq(self, column: str, value):
+        self._params[column] = f"eq.{value}"
+        return self
+
+    def execute(self):
+        import httpx
+        with httpx.Client(headers=self._headers, timeout=30.0) as http:
+            if self._method == "GET":
+                resp = http.get(self._url, params=self._params)
+            elif self._method == "POST":
+                resp = http.post(self._url, json=self._body, params=self._params)
+            elif self._method == "PATCH":
+                resp = http.patch(self._url, json=self._body, params=self._params)
+            else:  # DELETE
+                resp = http.delete(self._url, params=self._params)
+        resp.raise_for_status()
+        data = resp.json() if resp.content else []
+        if isinstance(data, dict):
+            data = [data]
+
+        class _Result:
+            pass
+        r = _Result()
+        r.data = data
+        return r
+
+
+class _SupabaseClient:
+    """Thin wrapper around the Supabase REST API — no external package needed."""
+
+    def __init__(self, url: str, key: str):
+        self._base = url.rstrip("/")
+        self._headers = {
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
+
+    def table(self, name: str) -> _Table:
+        return _Table(self._base, name, self._headers)
+
+# ──────────────────────────────────────────────────────────────────────────────
+
+
 def _norm_dt(val) -> Optional[str]:
     """Convert a Supabase ISO timestamp to a naive UTC string SQLite can store."""
     if not val:
@@ -498,8 +575,7 @@ class CachedRepository(AbstractRepository):
     """
 
     def __init__(self, supabase_url: str, supabase_key: str, db_path: str = "mcqs.db"):
-        from supabase import create_client
-        self._sb = create_client(supabase_url, supabase_key)
+        self._sb = _SupabaseClient(supabase_url, supabase_key)
         self._local = SQLiteRepository(db_path)
         try:
             self._sync_from_supabase()

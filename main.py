@@ -42,10 +42,28 @@ def main(page: ft.Page):
     if os.path.exists(_icon_path):
         page.window.icon = _icon_path
 
-    repo = CachedRepository(
-        supabase_url=os.environ["SUPABASE_URL"],
-        supabase_key=os.environ["SUPABASE_KEY"],
-    )
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    supabase_key = os.environ.get("SUPABASE_KEY", "")
+    if not supabase_url or not supabase_key:
+        import traceback
+        page.add(ft.Text(
+            f"Missing credentials.\n.env path: {Path(__file__).parent / '.env'}\n"
+            f"Exists: {(Path(__file__).parent / '.env').exists()}",
+            color=ft.Colors.ERROR, selectable=True,
+        ))
+        page.update()
+        return
+
+    try:
+        repo = CachedRepository(supabase_url=supabase_url, supabase_key=supabase_key)
+    except Exception as e:
+        import traceback
+        page.add(ft.Text(
+            f"Repo init error:\n{traceback.format_exc()}",
+            color=ft.Colors.ERROR, selectable=True,
+        ))
+        page.update()
+        return
     content = ft.Column(expand=True, spacing=0)
     selected_index = [0]
 
