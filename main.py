@@ -1,10 +1,24 @@
 import flet as ft
 import os
-from dotenv import load_dotenv
+from pathlib import Path
 from core.database import CachedRepository
 from core import theme as T
 
-load_dotenv()
+
+def _load_env(path: Path) -> None:
+    """Minimal .env loader — no external dependency, works on Android."""
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+    except FileNotFoundError:
+        pass
+
+
+_load_env(Path(__file__).parent / ".env")
 
 _NAV_ITEMS = [
     ("Dashboard", ft.Icons.GRID_VIEW_OUTLINED,      ft.Icons.GRID_VIEW_ROUNDED),
@@ -23,7 +37,15 @@ def main(page: ft.Page):
     page.window.min_width = 360
     page.window.min_height = 640
 
-    repo = SQLiteRepository("mcqs.db")
+    # Set custom app icon (Flet on Windows requires .ico format)
+    _icon_path = os.path.join(os.path.dirname(__file__), "assets", "icon.ico")
+    if os.path.exists(_icon_path):
+        page.window.icon = _icon_path
+
+    repo = CachedRepository(
+        supabase_url=os.environ["SUPABASE_URL"],
+        supabase_key=os.environ["SUPABASE_KEY"],
+    )
     content = ft.Column(expand=True, spacing=0)
     selected_index = [0]
 
