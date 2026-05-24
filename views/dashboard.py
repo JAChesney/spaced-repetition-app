@@ -1,6 +1,6 @@
 from datetime import datetime
 import flet as ft
-from core.database import AbstractRepository
+from core.database import AbstractRepository, CachedRepository
 from core import theme as T
 from core import settings
 
@@ -273,6 +273,82 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
         dlg.open = True
         page.update()
 
+    def force_sync(_):
+        """Wipe the local SQLite cache and re-pull everything from Supabase."""
+        if not isinstance(repo, CachedRepository):
+            return  # offline / local-only mode — nothing to sync
+
+        sync_status = ft.Text("Syncing…", color=T.TEXT2, size=13)
+        dlg = ft.AlertDialog(
+            title=ft.Text("Force Sync", weight=ft.FontWeight.BOLD, color=T.TEXT),
+            bgcolor=T.CARD,
+            content=ft.Column([
+                ft.Text(
+                    "This will delete the local cache and download all cards\n"
+                    "fresh from Supabase. Your review progress stored in\n"
+                    "Supabase will NOT be lost.",
+                    color=T.TEXT2, size=13,
+                ),
+                sync_status,
+            ], spacing=10, tight=True),
+            actions=[
+                ft.TextButton("Cancel",
+                              on_click=lambda _: _close_dlg(),
+                              style=ft.ButtonStyle(color=T.TEXT2)),
+                ft.TextButton("Sync Now",
+                              on_click=lambda _: _do_sync(),
+                              style=ft.ButtonStyle(color=T.ACCENT)),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+            shape=ft.RoundedRectangleBorder(radius=16),
+        )
+
+        def _close_dlg():
+            dlg.open = False
+            page.update()
+
+        def _do_sync():
+            sync_status.value = "Syncing…"
+            sync_status.color = T.TEXT2
+            page.update()
+            try:
+                repo.clear_local_cache_and_sync()
+                sync_status.value = f"✓ Done — {repo.count_mcqs()} cards loaded from Supabase."
+                sync_status.color = T.ACCENT
+            except Exception as e:
+                sync_status.value = f"✗ Sync failed: {e}"
+                sync_status.color = ft.Colors.ERROR
+            page.update()
+
+        page.overlay.append(dlg)
+        dlg.open = True
+        page.update()
+
+    # Surface any sync error from startup as a dismissible banner
+    if isinstance(repo, CachedRepository) and repo.last_sync_error:
+        def _dismiss_banner(_):
+            sync_banner.visible = False
+            page.update()
+
+        sync_banner = ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.WIFI_OFF_ROUNDED, color=ft.Colors.AMBER, size=16),
+                ft.Text(
+                    f"Offline — showing cached data.  ({repo.last_sync_error})",
+                    color=ft.Colors.AMBER, size=12, expand=True,
+                ),
+                ft.IconButton(ft.Icons.CLOSE, icon_size=14,
+                              icon_color=ft.Colors.AMBER, on_click=_dismiss_banner),
+            ], spacing=8),
+            bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.AMBER),
+            border=ft.Border.all(1, ft.Colors.with_opacity(0.4, ft.Colors.AMBER)),
+            border_radius=10,
+            padding=ft.padding.symmetric(horizontal=12, vertical=8),
+            margin=ft.margin.only(bottom=8),
+        )
+    else:
+        sync_banner = ft.Container(visible=False)
+
     # --- Top bar ---
     top_bar = ft.Container(
         content=ft.Row(
@@ -300,6 +376,12 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                             icon=ft.Icons.EDIT_NOTE_ROUNDED,
                             on_click=lambda _: navigate("manage"),
                         ),
+                        ft.PopupMenuItem(),  # divider
+                        ft.PopupMenuItem(
+                            content="Force Sync from Supabase",
+                            icon=ft.Icons.SYNC_ROUNDED,
+                            on_click=force_sync,
+                        ),
                     ],
                 ),
             ],
@@ -312,6 +394,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
             top_bar,
             ft.Column(
                 [
+                    sync_banner,
                     ft.Text(_greeting(), size=12, color=T.TEXT2, weight=ft.FontWeight.W_600),
                     ft.Text("Ready to flow?", size=26, weight=ft.FontWeight.BOLD, color=T.TEXT),
                     ft.Container(height=4),
