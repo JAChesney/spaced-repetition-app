@@ -83,8 +83,25 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
         topic_slot.update()
         subtopic_slot.update()
 
-    type_dd = _dd("Question Type *", ["STATIC", "CURRENT_AFFAIRS"],
-                  value=init_type, on_change=on_type_change, width=220)
+    _type_opts = [
+        ft.DropdownOption(key="STATIC",          text="Static"),
+        ft.DropdownOption(key="CURRENT_AFFAIRS",  text="Current Affairs"),
+        ft.DropdownOption(key="BIHAR_GK",         text="Bihar GK"),
+    ]
+    type_dd = ft.Dropdown(
+        label="Question Type *",
+        options=_type_opts,
+        value=init_type if init_type in ("STATIC", "CURRENT_AFFAIRS", "BIHAR_GK") else "STATIC",
+        on_select=on_type_change,
+        width=220,
+        filled=True,
+        fill_color=T.CARD,
+        border_color=T.BORDER,
+        focused_border_color=T.ACCENT,
+        label_style=ft.TextStyle(color=T.TEXT2),
+        border_radius=10,
+        color=T.TEXT,
+    )
 
     # ── cascading taxonomy ────────────────────────────────────────────────
     # Define handlers first (before _fresh_* helpers that reference them).

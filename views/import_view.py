@@ -65,7 +65,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                     raise ValueError(f"'answer' must be A/B/C/D, got '{ans}'")
 
                 q_type = str(row.get("question_type", "STATIC")).strip().upper()
-                if q_type not in ("STATIC", "CURRENT_AFFAIRS"):
+                if q_type not in ("STATIC", "CURRENT_AFFAIRS", "BIHAR_GK"):
                     q_type = "STATIC"
 
                 raw_date = str(row.get("date", "")).strip()
@@ -136,7 +136,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                 ft.Text(
                     'Required: question, A, B, C, D, answer (must be A/B/C/D).\n'
                     'Optional: subject, topic, subtopic, explanation.\n'
-                    'Optional: question_type (STATIC or CURRENT_AFFAIRS, default STATIC).\n'
+                    'Optional: question_type (STATIC, CURRENT_AFFAIRS, or BIHAR_GK — default STATIC).\n'
                     'Optional: date (YYYY-MM-DD). For CURRENT_AFFAIRS, date is required and becomes the topic.',
                     color=T.TEXT2,
                     size=12,

@@ -184,7 +184,7 @@ class SQLiteRepository(AbstractRepository):
                     subtopic TEXT DEFAULT '',
                     explanation TEXT DEFAULT '',
                     question_type TEXT NOT NULL DEFAULT 'STATIC'
-                        CHECK(question_type IN ('STATIC','CURRENT_AFFAIRS')),
+                        CHECK(question_type IN ('STATIC','CURRENT_AFFAIRS','BIHAR_GK')),
                     event_date TEXT,
                     created_at TEXT DEFAULT (datetime('now'))
                 );

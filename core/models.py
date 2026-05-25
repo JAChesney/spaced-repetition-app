@@ -15,7 +15,7 @@ class MCQ:
     topic: str = ""
     subtopic: str = ""           # optional
     explanation: str = ""
-    question_type: str = "STATIC"   # "STATIC" or "CURRENT_AFFAIRS"
+    question_type: str = "STATIC"   # "STATIC", "CURRENT_AFFAIRS", or "BIHAR_GK"
     event_date: Optional[date] = None  # for CURRENT_AFFAIRS only
     id: Optional[int] = None
     created_at: Optional[datetime] = None
