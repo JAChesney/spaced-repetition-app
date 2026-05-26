@@ -287,9 +287,3 @@ The launcher icon uses Android's **Adaptive Icon** system so it renders crisp at
 3. Commit your changes: `git commit -m "feat: describe your change"`
 4. Push the branch: `git push origin feature/your-feature`
 5. Open a Pull Request against `main`
-
----
-
-## License
-
-MIT — see [LICENSE](LICENSE) for details.
