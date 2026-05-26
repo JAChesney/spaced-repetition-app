@@ -231,7 +231,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
         )
         if is_edit:
             repo.update_mcq(mcq)
-            show_success("MCQ updated.")
+            navigate("manage")
         else:
             repo.add_mcq(mcq)
             show_success("MCQ saved! Fill in another or go back.")
@@ -263,7 +263,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
         content=ft.Row(
             [
                 ft.IconButton(ft.Icons.ARROW_BACK_ROUNDED, icon_color=T.TEXT2,
-                              on_click=lambda _: navigate("library")),
+                              on_click=lambda _: navigate("manage" if is_edit else "library")),
                 ft.Text("Edit MCQ" if is_edit else "New MCQ",
                         size=20, weight=ft.FontWeight.BOLD, color=T.TEXT),
             ],
@@ -303,7 +303,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
                                 content=ft.Text("Cancel", color=T.TEXT2, size=14),
                                 border=ft.Border.all(1, T.BORDER), border_radius=10,
                                 padding=ft.Padding.symmetric(vertical=13, horizontal=20),
-                                on_click=lambda _: navigate("library"),
+                                on_click=lambda _: navigate("manage" if is_edit else "library"),
                             ),
                         ],
                         spacing=10,

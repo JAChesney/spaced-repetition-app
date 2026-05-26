@@ -12,3 +12,7 @@ product = "StudyFlow"
 # Must match the dark-navy colour used in icon.svg so the icon looks seamless
 # on every device icon shape (circle, squircle, rounded-square, etc.).
 adaptive_icon_background = "#162040"
+# Foreground SVG: artwork only, no background rect — background is handled above.
+# Keeping foreground separate prevents Android from scaling down a flattened PNG
+# which was causing the blurry icon on the home screen.
+adaptive_icon_foreground = "icon-android.svg"

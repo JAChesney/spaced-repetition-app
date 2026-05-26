@@ -355,7 +355,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
             [
                 ft.Row(
                     [
-                        ft.Icon(ft.Icons.MENU_BOOK_ROUNDED, color=T.ACCENT, size=24),
+                        ft.Image(src="icon.png", width=28, height=28, fit="contain"),
                         ft.Text("StudyFlow", size=20, weight=ft.FontWeight.BOLD, color=T.TEXT),
                     ],
                     spacing=8,
