@@ -27,7 +27,9 @@ A cross-platform application for exam preparation using multiple-choice question
 - **Paginated library** — Fast browsing even with thousands of questions
 - **Cloud sync** — Supabase is the source of truth; SQLite caches data locally for offline speed
 - **Dark mode UI** — Clean, readable interface built for long study sessions
-- **Custom app icon** — Branded icon shown in the window title bar and Android launcher
+- **Splash screen** — 2-second branded splash on every launch before the main UI loads
+- **Smart navigation** — Editing an MCQ returns you to the MCQ list, not the dashboard
+- **Custom app icon** — Branded adaptive icon shown in the Android launcher and window title bar
 
 ---
 
@@ -115,12 +117,16 @@ The app window will open automatically. On first launch it pulls all data from S
 
 ```
 SpacedRepetitionApp/
-├── main.py                  # App entry point, page setup, routing
+├── main.py                  # Entry point: 2s splash screen → _start_app() → routing
 ├── requirements.txt         # Python dependencies
+├── pyproject.toml           # Flet build config (Android adaptive icon, product name)
 ├── settings.json            # User configuration (gitignored, auto-created)
 ├── .env                     # Supabase credentials (gitignored)
+├── icon-android.svg         # Android adaptive icon foreground (no background layer)
 ├── assets/
-│   ├── icon.png             # Source app icon (1024×1024, used for Android builds)
+│   ├── icon.png             # App icon raster source (1024×1024)
+│   ├── icon.svg             # Full icon with background — fallback for web/desktop
+│   ├── icon-android.svg     # Android adaptive icon foreground copy (inside assets)
 │   └── icon.ico             # Windows desktop icon (multi-size 16–256px)
 ├── core/
 │   ├── database.py          # Repository layer: AbstractRepository, SQLiteRepository, CachedRepository
@@ -133,7 +139,7 @@ SpacedRepetitionApp/
     ├── dashboard.py         # Home screen with daily progress and due-card summary
     ├── library.py           # Browse subjects and topics
     ├── study.py             # Interactive study session with SM-2 rating
-    ├── create_mcq.py        # Create / edit MCQ form (with cascading dropdowns)
+    ├── create_mcq.py        # Create / edit MCQ form — save returns to MCQ list
     ├── import_view.py       # Bulk CSV import with template download
     └── manage.py            # Paginated search and manage all MCQs
 ```
@@ -237,15 +243,27 @@ Ease factor is bounded between **1.3** and **3.0**.
 
 ## Building for Android
 
-Flet can package the app as an Android APK using Flutter under the hood.
+Flet packages the app as an Android APK using Flutter under the hood.
 
-**Prerequisites:** [Flutter SDK](https://flutter.dev/docs/get-started/install) and Android SDK installed.
+### Prerequisites
+
+- [Temurin JDK 17](https://adoptium.net/) or higher
+- [Android Studio](https://developer.android.com/studio) (for Android SDK)
+- `ANDROID_HOME` environment variable set to your SDK path
+
+### Build
 
 ```bash
-flet build apk
+flet build apk --clear-cache
 ```
 
-The generated APK will be in `build/apk/`.
+The generated APK will be at `build/apk/app-release.apk`.
+
+### Install on device
+
+```bash
+adb install build/apk/app-release.apk
+```
 
 ### App icon (Android Adaptive Icon)
 
@@ -253,12 +271,12 @@ The launcher icon uses Android's **Adaptive Icon** system so it renders crisp at
 
 | File | Purpose |
 |---|---|
-| `assets/icon_android.svg` | **Foreground layer** — the card-and-waves artwork on a transparent canvas. Picked up automatically by `flet build apk` as the Android-specific icon. |
-| `assets/icon.svg` | Full icon with background — used as the fallback for other platforms (web, desktop). |
-| `assets/icon.png` | Legacy raster fallback (1024 × 1024) — kept for Windows desktop. |
-| `pyproject.toml` → `tool.flet.android.adaptive_icon_background` | Sets the background layer colour (`#162040`, dark navy) so the foreground blends seamlessly against every device shape. |
-
-`flutter_launcher_icons` **0.14.4** (bundled with Flet 0.84) supports SVG foreground layers natively — no manual mipmap generation needed.
+| `icon-android.svg` | **Foreground layer** — card-and-waves artwork on a transparent canvas, placed at project root for Flet to pick up |
+| `assets/icon-android.svg` | Copy of the foreground SVG kept inside assets for reference |
+| `assets/icon.svg` | Full icon with background — fallback for web/desktop |
+| `assets/icon.png` | Raster fallback (1024×1024) |
+| `pyproject.toml` → `adaptive_icon_background` | Background layer colour (`#162040`, dark navy) |
+| `pyproject.toml` → `adaptive_icon_foreground` | Points to `icon-android.svg` at project root |
 
 ---
 
