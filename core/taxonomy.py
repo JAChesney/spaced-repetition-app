@@ -176,6 +176,7 @@ TAXONOMY: dict[str, dict[str, list[str]]] = {
             "Metals",
             "Chemical Reactions",
             "Salts",
+            "States of Matter",
         ],
         "Biology": [
             "Human Body",
