@@ -169,12 +169,15 @@ TAXONOMY: dict[str, dict[str, list[str]]] = {
             "Magnetism",
             "Light",
             "Heat",
+            "Fundamental Units & Derived Units",
         ],
         "Chemistry": [
             "Elements",
             "Acids and Bases",
             "Metals",
             "Chemical Reactions",
+            "Salts",
+            "States of Matter",
         ],
         "Biology": [
             "Human Body",

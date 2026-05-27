@@ -1,5 +1,6 @@
 import flet as ft
 import os
+import asyncio
 from pathlib import Path
 from core.database import CachedRepository
 from core import theme as T
@@ -33,7 +34,7 @@ def main(page: ft.Page):
     page.title = "StudyFlow"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = T.BG
-    page.padding = ft.Padding(left=12, right=12, top=44, bottom=0)
+    page.padding = ft.Padding(left=0, right=0, top=46, bottom=0)
     page.window.min_width = 360
     page.window.min_height = 640
 
@@ -42,6 +43,36 @@ def main(page: ft.Page):
     if os.path.exists(_icon_path):
         page.window.icon = _icon_path
 
+    # ── Splash screen ────────────────────────────────────────────────────────
+    splash = ft.Container(
+        content=ft.Column(
+            [
+                ft.Image(src="icon.png", width=120, height=120, fit="contain"),
+                ft.Text("StudyFlow", size=32, weight=ft.FontWeight.BOLD, color=T.TEXT),
+                ft.Text("Spaced Repetition Learning", size=14, color=T.TEXT2),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            spacing=16,
+        ),
+        expand=True,
+        bgcolor=T.BG,
+        alignment=ft.Alignment.CENTER,
+        padding=ft.Padding(left=24, right=24, top=0, bottom=0),
+    )
+    page.add(splash)
+    page.update()
+
+    async def _launch():
+        await asyncio.sleep(2)
+        page.controls.clear()
+        page.update()
+        _start_app(page)
+
+    page.run_task(_launch)
+
+
+def _start_app(page: ft.Page):
     supabase_url = os.environ.get("SUPABASE_URL", "")
     supabase_key = os.environ.get("SUPABASE_KEY", "")
     if not supabase_url or not supabase_key:
@@ -154,7 +185,14 @@ def main(page: ft.Page):
         page.update()
 
     navigate("dashboard")
-    page.add(ft.Column([content, nav_container], spacing=0, expand=True))
+    page.add(ft.Column(
+        [
+            ft.Container(content=content, padding=ft.Padding(left=20, right=20, top=0, bottom=0), expand=True),
+            nav_container,
+        ],
+        spacing=0,
+        expand=True,
+    ))
 
 
 if __name__ == "__main__":

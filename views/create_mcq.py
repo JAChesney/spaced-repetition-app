@@ -83,8 +83,25 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
         topic_slot.update()
         subtopic_slot.update()
 
-    type_dd = _dd("Question Type *", ["STATIC", "CURRENT_AFFAIRS"],
-                  value=init_type, on_change=on_type_change, width=220)
+    _type_opts = [
+        ft.DropdownOption(key="STATIC",          text="Static"),
+        ft.DropdownOption(key="CURRENT_AFFAIRS",  text="Current Affairs"),
+        ft.DropdownOption(key="BIHAR_GK",         text="Bihar GK"),
+    ]
+    type_dd = ft.Dropdown(
+        label="Question Type *",
+        options=_type_opts,
+        value=init_type if init_type in ("STATIC", "CURRENT_AFFAIRS", "BIHAR_GK") else "STATIC",
+        on_select=on_type_change,
+        width=220,
+        filled=True,
+        fill_color=T.CARD,
+        border_color=T.BORDER,
+        focused_border_color=T.ACCENT,
+        label_style=ft.TextStyle(color=T.TEXT2),
+        border_radius=10,
+        color=T.TEXT,
+    )
 
     # ── cascading taxonomy ────────────────────────────────────────────────
     # Define handlers first (before _fresh_* helpers that reference them).
@@ -214,7 +231,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
         )
         if is_edit:
             repo.update_mcq(mcq)
-            show_success("MCQ updated.")
+            navigate("manage")
         else:
             repo.add_mcq(mcq)
             show_success("MCQ saved! Fill in another or go back.")
@@ -246,7 +263,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
         content=ft.Row(
             [
                 ft.IconButton(ft.Icons.ARROW_BACK_ROUNDED, icon_color=T.TEXT2,
-                              on_click=lambda _: navigate("library")),
+                              on_click=lambda _: navigate("manage" if is_edit else "library")),
                 ft.Text("Edit MCQ" if is_edit else "New MCQ",
                         size=20, weight=ft.FontWeight.BOLD, color=T.TEXT),
             ],
@@ -286,7 +303,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
                                 content=ft.Text("Cancel", color=T.TEXT2, size=14),
                                 border=ft.Border.all(1, T.BORDER), border_radius=10,
                                 padding=ft.Padding.symmetric(vertical=13, horizontal=20),
-                                on_click=lambda _: navigate("library"),
+                                on_click=lambda _: navigate("manage" if is_edit else "library"),
                             ),
                         ],
                         spacing=10,

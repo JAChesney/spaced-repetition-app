@@ -184,7 +184,7 @@ class SQLiteRepository(AbstractRepository):
                     subtopic TEXT DEFAULT '',
                     explanation TEXT DEFAULT '',
                     question_type TEXT NOT NULL DEFAULT 'STATIC'
-                        CHECK(question_type IN ('STATIC','CURRENT_AFFAIRS')),
+                        CHECK(question_type IN ('STATIC','CURRENT_AFFAIRS','BIHAR_GK')),
                     event_date TEXT,
                     created_at TEXT DEFAULT (datetime('now'))
                 );
@@ -579,11 +579,7 @@ class CachedRepository(AbstractRepository):
         self._db_path = db_path
         self._local = SQLiteRepository(db_path)
         self.last_sync_error: Optional[str] = None
-        try:
-            self._sync_from_supabase()
-        except Exception as e:
-            # Offline or network error — keep stale local cache and surface the reason
-            self.last_sync_error = str(e)
+        # No auto-sync on startup — user triggers sync manually via "Sync from Supabase".
 
     def clear_local_cache_and_sync(self) -> None:
         """Delete the local SQLite file and re-sync from Supabase.
