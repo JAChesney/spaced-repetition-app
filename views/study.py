@@ -173,7 +173,9 @@ def build(page: ft.Page, repo: AbstractRepository, navigate,
     def load_card():
         mcq = current_mcq()
         state["answered"] = False
-        state["advancing"] = False
+        # Do NOT reset "advancing" here — it must stay True until the user
+        # selects an answer on the new card, so any queued rating-button taps
+        # from a rapid double-click are still blocked.
         state["selected"] = None
         show_exp_state["visible"] = False
 
@@ -202,6 +204,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate,
         if state["answered"]:
             return
         state["answered"] = True
+        state["advancing"] = False  # new card is being answered — re-open the gate
         state["selected"] = selected_letter
         correct = state["shuffled_correct"]
 
