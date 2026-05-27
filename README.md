@@ -72,7 +72,7 @@ cd spaced-repetition-app
 **2. Create a virtual environment**
 
 ```bash
-python -m venv sraenv
+py -3.12 -m venv sraenv
 ```
 
 **3. Activate the virtual environment**
