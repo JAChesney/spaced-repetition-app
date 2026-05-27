@@ -579,11 +579,7 @@ class CachedRepository(AbstractRepository):
         self._db_path = db_path
         self._local = SQLiteRepository(db_path)
         self.last_sync_error: Optional[str] = None
-        try:
-            self._sync_from_supabase()
-        except Exception as e:
-            # Offline or network error — keep stale local cache and surface the reason
-            self.last_sync_error = str(e)
+        # No auto-sync on startup — user triggers sync manually via "Sync from Supabase".
 
     def clear_local_cache_and_sync(self) -> None:
         """Delete the local SQLite file and re-sync from Supabase.
