@@ -130,6 +130,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate,
     state = {
         "index": 0,
         "answered": False,
+        "advancing": False,
         "selected": None,
         "shuffled_correct": None,
         "pairs": [],
@@ -172,6 +173,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate,
     def load_card():
         mcq = current_mcq()
         state["answered"] = False
+        state["advancing"] = False
         state["selected"] = None
         show_exp_state["visible"] = False
 
@@ -237,6 +239,10 @@ def build(page: ft.Page, repo: AbstractRepository, navigate,
         page.update()
 
     def record_and_advance(quality: int):
+        if state["advancing"]:
+            return
+        state["advancing"] = True
+
         mcq = current_mcq()
         was_correct = state["selected"] == state["shuffled_correct"]
 
