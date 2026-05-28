@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" width="1080" height="1080">
+  <!--
+    Android Adaptive Icon Foreground
+    ─────────────────────────────────────────────────────────────────────
+    Background colour is set to #162040 (dark navy) in pyproject.toml.
+    This layer carries only the foreground artwork on a TRANSPARENT canvas.
+
+    Adaptive icon safe zone: 72dp of 108dp total, so ≈66.7% of the canvas.
+    Safe zone on this 1080×1080 canvas → centred 720×720 region
+    (i.e. from x=180,y=180 to x=900,y=900).
+
+    All artwork is kept comfortably inside this zone.
+  -->
+  <defs>
+    <!-- Blue gradient for the card frame and handle -->
+    <linearGradient id="blueGrad" x1="180" y1="230" x2="900" y2="850" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5f9ef5"/>
+      <stop offset="100%" stop-color="#2c65c8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Transparent background (no fill → system background colour shows through) -->
+
+  <!-- ── Handle: D-shaped thick arc on the left side ── -->
+  <!-- Drawn first so the main body sits on top at the junction -->
+  <path d="M 305,408 C 228,408 192,444 192,500 C 192,556 228,592 305,592"
+        stroke="url(#blueGrad)" stroke-width="56" fill="none"
+        stroke-linecap="butt"/>
+
+  <!-- Handle rivets (connection circles) -->
+  <circle cx="300" cy="408" r="21" fill="url(#blueGrad)"/>
+  <circle cx="300" cy="592" r="21" fill="url(#blueGrad)"/>
+
+  <!-- ── Main card / frame body ── -->
+  <rect x="300" y="230" width="500" height="620" rx="74" ry="74" fill="url(#blueGrad)"/>
+
+  <!-- ── Inner dark card area ── -->
+  <!-- Use the same background colour so it blends with the adaptive background -->
+  <rect x="340" y="270" width="420" height="540" rx="52" ry="52" fill="#162040"/>
+
+  <!-- ── White tilde wave (top) — ≈ symbol upper line ── -->
+  <path d="M 372,468
+           C 402,430 436,430 464,468
+           C 492,506 526,506 554,468
+           C 582,430 616,430 644,468
+           C 672,506 700,498 714,484"
+        stroke="#FFFFFF" stroke-width="32" fill="none"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- ── Gray tilde wave (bottom) — ≈ symbol lower line ── -->
+  <path d="M 372,546
+           C 402,508 436,508 464,546
+           C 492,584 526,584 554,546
+           C 582,508 616,508 644,546
+           C 672,584 700,576 714,562"
+        stroke="#7b8fa8" stroke-width="32" fill="none"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

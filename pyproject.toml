@@ -1,0 +1,19 @@
+[project]
+name = "StudyFlow"
+description = "Spaced Repetition MCQ App"
+version = "1.0.0"
+
+# ─── Flet build configuration ─────────────────────────────────────────────────
+[tool.flet]
+product = "StudyFlow"
+icon = "assets/icon.svg"
+
+[tool.flet.android]
+# Adaptive icon background colour — this is the "canvas" behind the foreground SVG.
+# Must match the dark-navy colour used in icon.svg so the icon looks seamless
+# on every device icon shape (circle, squircle, rounded-square, etc.).
+adaptive_icon_background = "#162040"
+# Foreground SVG: artwork only, no background rect — background is handled above.
+# Keeping foreground separate prevents Android from scaling down a flattened PNG
+# which was causing the blurry icon on the home screen.
+adaptive_icon_foreground = "assets/icon.svg"
