@@ -47,7 +47,7 @@ def main(page: ft.Page):
     splash = ft.Container(
         content=ft.Column(
             [
-                ft.Image(src="icon.png", width=120, height=120, fit="contain"),
+                ft.Image(src="assets/icon-android.svg", width=120, height=120, fit="contain"),
                 ft.Text("StudyFlow", size=32, weight=ft.FontWeight.BOLD, color=T.TEXT),
                 ft.Text("Spaced Repetition Learning", size=14, color=T.TEXT2),
             ],

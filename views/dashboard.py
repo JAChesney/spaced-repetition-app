@@ -49,6 +49,23 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
     daily_goal = s["daily_goal"]
     goal_pct = min(reviewed / daily_goal, 1.0)
 
+    # --- Next-due countdown (shown only when nothing is due right now) ---
+    next_due_text = ft.Container(visible=False)
+    if total_due == 0:
+        next_info = repo.get_next_due_info()
+        if next_info:
+            d = next_info["days_until"]
+            n = next_info["count"]
+            when = "tomorrow" if d == 1 else f"in {d} days"
+            label = f"Next: {n} card{'s' if n != 1 else ''} due {when}"
+            next_due_text = ft.Row(
+                [
+                    ft.Icon(ft.Icons.SCHEDULE_ROUNDED, color=T.ACCENT, size=14),
+                    ft.Text(label, size=12, color=T.TEXT2),
+                ],
+                spacing=6,
+            )
+
     # --- Due Today card ---
     due_card = _card(
         ft.Column(
@@ -65,6 +82,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                     vertical_alignment=ft.CrossAxisAlignment.END,
                     spacing=8,
                 ),
+                next_due_text,
                 ft.Container(height=4),
                 ft.Container(
                     content=ft.Text(
@@ -404,7 +422,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
             [
                 ft.Row(
                     [
-                        ft.Image(src="icon.png", width=28, height=28, fit="contain"),
+                        ft.Image(src="icon-android.svg", width=28, height=28, fit="contain"),
                         ft.Text("StudyFlow", size=20, weight=ft.FontWeight.BOLD, color=T.TEXT),
                     ],
                     spacing=8,

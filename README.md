@@ -4,7 +4,7 @@
   <img src="assets/icon.png" width="120" alt="StudyFlow icon" />
 </p>
 
-A cross-platform application for exam preparation using multiple-choice questions (MCQs) and the **SM-2 spaced repetition algorithm**. Built with Python and [Flet](https://flet.dev/) (Flutter for Python), with **Supabase** as the cloud backend and **SQLite** as a local cache.
+A cross-platform application for exam preparation using multiple-choice questions (MCQs) and spaced repetition scheduling. Built with Python and [Flet](https://flet.dev/) (Flutter for Python), with **Supabase** as the cloud backend and **SQLite** as a local cache.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Flet](https://img.shields.io/badge/flet-0.84.0-purple)
@@ -15,17 +15,17 @@ A cross-platform application for exam preparation using multiple-choice question
 
 ## Features
 
-- **Spaced repetition scheduling** — SM-2 algorithm adjusts review intervals based on recall quality
+- **Fixed-interval scheduling** — Review intervals are currently fixed (Again / Hard = 1 day, Good = 3 days, Easy = 5 days); SM-2 adaptive scheduling will replace this after testing
 - **Difficulty ratings** — Rate each answer as Again / Hard / Good / Easy
 - **Structured taxonomy** — Subject → Topic → Subtopic cascading organisation across 13 subjects
 - **Current Affairs mode** — Special subject where the event date is used as the topic for date-based recall
-- **Static & Current Affairs question types** — Tag each MCQ as `STATIC` or `CURRENT_AFFAIRS`
+- **Three question types** — Tag each MCQ as `STATIC`, `CURRENT_AFFAIRS`, or `BIHAR_GK`
 - **Daily progress tracking** — Set a daily review goal and track your streak
 - **Bulk CSV import** — Add hundreds of questions at once from a CSV file
 - **MCQ editor** — Create, edit, and delete questions individually with full field support
 - **Search & filter** — Find questions by keyword, subject, or topic
 - **Paginated library** — Fast browsing even with thousands of questions
-- **Cloud sync** — Supabase is the source of truth; SQLite caches data locally for offline speed
+- **Cloud sync** — Supabase is the source of truth; SQLite is populated from Supabase on every startup and kept in sync on every write
 - **Dark mode UI** — Clean, readable interface built for long study sessions
 - **Splash screen** — 2-second branded splash on every launch before the main UI loads
 - **Smart navigation** — Editing an MCQ returns you to the MCQ list, not the dashboard
@@ -46,7 +46,7 @@ A cross-platform application for exam preparation using multiple-choice question
 | UI Framework | [Flet](https://flet.dev/) 0.84.0 (Flutter for Python) |
 | Cloud Database | [Supabase](https://supabase.com/) (PostgreSQL) |
 | Local Cache | SQLite (via `sqlite3` stdlib) |
-| Algorithm | SM-2 Spaced Repetition |
+| Scheduling | Fixed intervals (SM-2 planned post-testing) |
 | Language | Python 3.10+ |
 | HTTP Client | `httpx` via `supabase-py` |
 | Config | `.env` (Supabase credentials) + `settings.json` |
@@ -109,7 +109,7 @@ You can find these in your Supabase project under **Settings → API**.
 python main.py
 ```
 
-The app window will open automatically. On first launch it pulls all data from Supabase into the local SQLite cache.
+The app window will open automatically. On startup it pulls all data from Supabase into the local SQLite cache.
 
 ---
 
@@ -121,24 +121,27 @@ SpacedRepetitionApp/
 ├── requirements.txt         # Python dependencies
 ├── pyproject.toml           # Flet build config (Android adaptive icon, product name)
 ├── settings.json            # User configuration (gitignored, auto-created)
+├── mcqs.db                  # Local SQLite cache (gitignored, auto-created on first run)
 ├── .env                     # Supabase credentials (gitignored)
-├── icon-android.svg         # Android adaptive icon foreground (no background layer)
 ├── assets/
 │   ├── icon.png             # App icon raster source (1024×1024)
 │   ├── icon.svg             # Full icon with background — fallback for web/desktop
-│   ├── icon-android.svg     # Android adaptive icon foreground copy (inside assets)
-│   └── icon.ico             # Windows desktop icon (multi-size 16–256px)
+│   ├── icon.ico             # Windows desktop icon (multi-size 16–256px)
+│   ├── icon-android.svg     # Android adaptive icon foreground (transparent canvas)
+│   └── icon-android.ico     # Android icon in ICO format
 ├── core/
+│   ├── __init__.py
 │   ├── database.py          # Repository layer: AbstractRepository, SQLiteRepository, CachedRepository
 │   ├── models.py            # Data models: MCQ, CardProgress, ReviewLog
-│   ├── spaced_repetition.py # SM-2 algorithm implementation
+│   ├── spaced_repetition.py # Scheduling logic (fixed intervals; SM-2 planned)
 │   ├── taxonomy.py          # Subject → Topic → Subtopic definitions (13 subjects)
 │   ├── settings.py          # Settings loader and saver
 │   └── theme.py             # UI theme colours and styling constants
 └── views/
+    ├── __init__.py
     ├── dashboard.py         # Home screen with daily progress and due-card summary
     ├── library.py           # Browse subjects and topics
-    ├── study.py             # Interactive study session with SM-2 rating
+    ├── study.py             # Interactive study session with rating buttons
     ├── create_mcq.py        # Create / edit MCQ form — save returns to MCQ list
     ├── import_view.py       # Bulk CSV import with template download
     └── manage.py            # Paginated search and manage all MCQs
@@ -198,7 +201,7 @@ question,option_a,option_b,option_c,option_d,correct_answer,subject,topic,subtop
 | `topic` | ✅ | Must match a topic under the subject |
 | `subtopic` | ❌ | Optional further classification |
 | `explanation` | ❌ | Shown after answering |
-| `question_type` | ❌ | `STATIC` (default) or `CURRENT_AFFAIRS` |
+| `question_type` | ❌ | `STATIC` (default), `CURRENT_AFFAIRS`, or `BIHAR_GK` |
 | `event_date` | ❌ | `YYYY-MM-DD` — required for `CURRENT_AFFAIRS` questions |
 
 A template CSV can be downloaded from within the app on the **Import** screen.
@@ -211,6 +214,7 @@ A template CSV can be downloaded from within the app on the **Import** screen.
 |------|-------------|
 | `STATIC` | Standard MCQ — subject/topic/subtopic classification |
 | `CURRENT_AFFAIRS` | News-based MCQ — `event_date` is used as the topic for date-based recall |
+| `BIHAR_GK` | Bihar General Knowledge MCQ — same structure as `STATIC` |
 
 For **Current Affairs** questions, the event date (e.g. `2026-05-23`) is automatically stored as the topic so you can filter and study by date.
 
@@ -226,18 +230,20 @@ Subjects, topics, and subtopics are defined in `core/taxonomy.py` and drive the 
 
 ---
 
-## Spaced Repetition Algorithm
+## Scheduling
 
-StudyFlow uses the **SM-2** algorithm. After each answer you rate your recall:
+> **Current behaviour:** Fixed intervals — no adaptive logic yet.
 
-| Rating | Effect |
-|--------|--------|
-| **Again (0)** | Resets progress; card shown again tomorrow |
-| **Hard (1)** | Ease −0.15; interval × 1.2 |
-| **Good (2)** | Standard progression; interval × ease factor |
-| **Easy (3)** | Ease +0.15; interval × ease factor × 1.3 |
+After each answer you rate your recall, and the next review date is set to a fixed offset from today:
 
-Ease factor is bounded between **1.3** and **3.0**.
+| Rating | Next review |
+|--------|-------------|
+| **Again (0)** | 1 day — resets repetition count |
+| **Hard (1)** | 1 day |
+| **Good (2)** | 3 days |
+| **Easy (3)** | 5 days |
+
+This keeps scheduling predictable while the question bank is being built and tested. Once the content is stable, fixed intervals will be replaced with the **SM-2** algorithm, which adjusts intervals and ease factors dynamically based on recall history.
 
 ---
 
@@ -271,12 +277,11 @@ The launcher icon uses Android's **Adaptive Icon** system so it renders crisp at
 
 | File | Purpose |
 |---|---|
-| `icon-android.svg` | **Foreground layer** — card-and-waves artwork on a transparent canvas, placed at project root for Flet to pick up |
-| `assets/icon-android.svg` | Copy of the foreground SVG kept inside assets for reference |
+| `assets/icon-android.svg` | **Foreground layer** — card-and-waves artwork on a transparent canvas |
 | `assets/icon.svg` | Full icon with background — fallback for web/desktop |
 | `assets/icon.png` | Raster fallback (1024×1024) |
 | `pyproject.toml` → `adaptive_icon_background` | Background layer colour (`#162040`, dark navy) |
-| `pyproject.toml` → `adaptive_icon_foreground` | Points to `icon-android.svg` at project root |
+| `pyproject.toml` → `adaptive_icon_foreground` | Points to `assets/icon-android.svg` |
 
 ---
 
