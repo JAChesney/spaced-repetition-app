@@ -569,7 +569,7 @@ class SQLiteRepository(AbstractRepository):
 class CachedRepository(AbstractRepository):
     """Supabase is the source of truth; SQLite is a local read cache.
 
-    On startup, pulls all data from Supabase into SQLite.
+    Pulls all data from Supabase into SQLite on every startup.
     All reads go to SQLite (fast, works offline).
     All writes go to Supabase first, then are mirrored to SQLite.
     """
@@ -579,7 +579,10 @@ class CachedRepository(AbstractRepository):
         self._db_path = db_path
         self._local = SQLiteRepository(db_path)
         self.last_sync_error: Optional[str] = None
-        # No auto-sync on startup — user triggers sync manually via "Sync from Supabase".
+        try:
+            self._sync_from_supabase()
+        except Exception as exc:
+            self.last_sync_error = str(exc)
 
     def clear_local_cache_and_sync(self) -> None:
         """Delete the local SQLite file and re-sync from Supabase.

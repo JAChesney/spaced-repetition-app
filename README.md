@@ -19,13 +19,13 @@ A cross-platform application for exam preparation using multiple-choice question
 - **Difficulty ratings** — Rate each answer as Again / Hard / Good / Easy
 - **Structured taxonomy** — Subject → Topic → Subtopic cascading organisation across 13 subjects
 - **Current Affairs mode** — Special subject where the event date is used as the topic for date-based recall
-- **Static & Current Affairs question types** — Tag each MCQ as `STATIC` or `CURRENT_AFFAIRS`
+- **Three question types** — Tag each MCQ as `STATIC`, `CURRENT_AFFAIRS`, or `BIHAR_GK`
 - **Daily progress tracking** — Set a daily review goal and track your streak
 - **Bulk CSV import** — Add hundreds of questions at once from a CSV file
 - **MCQ editor** — Create, edit, and delete questions individually with full field support
 - **Search & filter** — Find questions by keyword, subject, or topic
 - **Paginated library** — Fast browsing even with thousands of questions
-- **Cloud sync** — Supabase is the source of truth; SQLite caches data locally for offline speed
+- **Cloud sync** — Supabase is the source of truth; SQLite is populated from Supabase on every startup and kept in sync on every write
 - **Dark mode UI** — Clean, readable interface built for long study sessions
 - **Splash screen** — 2-second branded splash on every launch before the main UI loads
 - **Smart navigation** — Editing an MCQ returns you to the MCQ list, not the dashboard
@@ -109,7 +109,7 @@ You can find these in your Supabase project under **Settings → API**.
 python main.py
 ```
 
-The app window will open automatically. On first launch it pulls all data from Supabase into the local SQLite cache.
+The app window will open automatically. On startup it pulls all data from Supabase into the local SQLite cache.
 
 ---
 
@@ -198,7 +198,7 @@ question,option_a,option_b,option_c,option_d,correct_answer,subject,topic,subtop
 | `topic` | ✅ | Must match a topic under the subject |
 | `subtopic` | ❌ | Optional further classification |
 | `explanation` | ❌ | Shown after answering |
-| `question_type` | ❌ | `STATIC` (default) or `CURRENT_AFFAIRS` |
+| `question_type` | ❌ | `STATIC` (default), `CURRENT_AFFAIRS`, or `BIHAR_GK` |
 | `event_date` | ❌ | `YYYY-MM-DD` — required for `CURRENT_AFFAIRS` questions |
 
 A template CSV can be downloaded from within the app on the **Import** screen.
@@ -211,6 +211,7 @@ A template CSV can be downloaded from within the app on the **Import** screen.
 |------|-------------|
 | `STATIC` | Standard MCQ — subject/topic/subtopic classification |
 | `CURRENT_AFFAIRS` | News-based MCQ — `event_date` is used as the topic for date-based recall |
+| `BIHAR_GK` | Bihar General Knowledge MCQ — same structure as `STATIC` |
 
 For **Current Affairs** questions, the event date (e.g. `2026-05-23`) is automatically stored as the topic so you can filter and study by date.
 
