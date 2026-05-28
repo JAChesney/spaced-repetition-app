@@ -16,7 +16,7 @@ def _top_bar(deck_label: str, navigate) -> ft.Container:
             [
                 ft.Row(
                     [
-                        ft.Icon(ft.Icons.MENU_BOOK_ROUNDED, color=T.ACCENT, size=22),
+                        ft.Image(src="icon-android.svg", width=28, height=28, fit="contain"),
                         ft.Column(
                             [
                                 ft.Text("StudyFlow", size=16, weight=ft.FontWeight.BOLD, color=T.TEXT),
@@ -36,7 +36,7 @@ def _top_bar(deck_label: str, navigate) -> ft.Container:
                 ),
             ],
         ),
-        padding=ft.Padding.symmetric(horizontal=16, vertical=10),
+        padding=ft.Padding(left=0, right=0, top=8, bottom=8),
     )
 
 

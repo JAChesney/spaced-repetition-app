@@ -404,7 +404,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
             [
                 ft.Row(
                     [
-                        ft.Image(src="icon.png", width=28, height=28, fit="contain"),
+                        ft.Image(src="icon-android.svg", width=28, height=28, fit="contain"),
                         ft.Text("StudyFlow", size=20, weight=ft.FontWeight.BOLD, color=T.TEXT),
                     ],
                     spacing=8,

@@ -166,7 +166,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
             [
                 ft.Row(
                     [
-                        ft.Icon(ft.Icons.MENU_BOOK_ROUNDED, color=T.ACCENT, size=24),
+                        ft.Image(src="icon-android.svg", width=28, height=28, fit="contain"),
                         ft.Text("StudyFlow", size=20, weight=ft.FontWeight.BOLD, color=T.TEXT),
                     ],
                     spacing=8,
@@ -182,7 +182,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                 ),
             ],
         ),
-        padding=ft.Padding.symmetric(horizontal=20, vertical=14),
+        padding=ft.Padding(left=0, right=0, top=8, bottom=8),
     )
 
     return ft.Column(
