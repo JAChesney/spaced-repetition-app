@@ -122,7 +122,6 @@ SpacedRepetitionApp/
 ├── pyproject.toml           # Flet build config (Android adaptive icon, product name)
 ├── settings.json            # User configuration (gitignored, auto-created)
 ├── .env                     # Supabase credentials (gitignored)
-├── icon-android.svg         # Android adaptive icon foreground (no background layer)
 ├── assets/
 │   ├── icon.png             # App icon raster source (1024×1024)
 │   ├── icon.svg             # Full icon with background — fallback for web/desktop
