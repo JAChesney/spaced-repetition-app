@@ -4,7 +4,7 @@
   <img src="assets/icon.png" width="120" alt="StudyFlow icon" />
 </p>
 
-A cross-platform application for exam preparation using multiple-choice questions (MCQs) and the **SM-2 spaced repetition algorithm**. Built with Python and [Flet](https://flet.dev/) (Flutter for Python), with **Supabase** as the cloud backend and **SQLite** as a local cache.
+A cross-platform application for exam preparation using multiple-choice questions (MCQs) and spaced repetition scheduling. Built with Python and [Flet](https://flet.dev/) (Flutter for Python), with **Supabase** as the cloud backend and **SQLite** as a local cache.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Flet](https://img.shields.io/badge/flet-0.84.0-purple)
@@ -15,7 +15,7 @@ A cross-platform application for exam preparation using multiple-choice question
 
 ## Features
 
-- **Spaced repetition scheduling** — SM-2 algorithm adjusts review intervals based on recall quality
+- **Fixed-interval scheduling** — Review intervals are currently fixed (Again / Hard = 1 day, Good = 3 days, Easy = 5 days); SM-2 adaptive scheduling will replace this after testing
 - **Difficulty ratings** — Rate each answer as Again / Hard / Good / Easy
 - **Structured taxonomy** — Subject → Topic → Subtopic cascading organisation across 13 subjects
 - **Current Affairs mode** — Special subject where the event date is used as the topic for date-based recall
@@ -46,7 +46,7 @@ A cross-platform application for exam preparation using multiple-choice question
 | UI Framework | [Flet](https://flet.dev/) 0.84.0 (Flutter for Python) |
 | Cloud Database | [Supabase](https://supabase.com/) (PostgreSQL) |
 | Local Cache | SQLite (via `sqlite3` stdlib) |
-| Algorithm | SM-2 Spaced Repetition |
+| Scheduling | Fixed intervals (SM-2 planned post-testing) |
 | Language | Python 3.10+ |
 | HTTP Client | `httpx` via `supabase-py` |
 | Config | `.env` (Supabase credentials) + `settings.json` |
@@ -121,23 +121,27 @@ SpacedRepetitionApp/
 ├── requirements.txt         # Python dependencies
 ├── pyproject.toml           # Flet build config (Android adaptive icon, product name)
 ├── settings.json            # User configuration (gitignored, auto-created)
+├── mcqs.db                  # Local SQLite cache (gitignored, auto-created on first run)
 ├── .env                     # Supabase credentials (gitignored)
 ├── assets/
 │   ├── icon.png             # App icon raster source (1024×1024)
 │   ├── icon.svg             # Full icon with background — fallback for web/desktop
-│   ├── icon-android.svg     # Android adaptive icon foreground copy (inside assets)
-│   └── icon.ico             # Windows desktop icon (multi-size 16–256px)
+│   ├── icon.ico             # Windows desktop icon (multi-size 16–256px)
+│   ├── icon-android.svg     # Android adaptive icon foreground (transparent canvas)
+│   └── icon-android.ico     # Android icon in ICO format
 ├── core/
+│   ├── __init__.py
 │   ├── database.py          # Repository layer: AbstractRepository, SQLiteRepository, CachedRepository
 │   ├── models.py            # Data models: MCQ, CardProgress, ReviewLog
-│   ├── spaced_repetition.py # SM-2 algorithm implementation
+│   ├── spaced_repetition.py # Scheduling logic (fixed intervals; SM-2 planned)
 │   ├── taxonomy.py          # Subject → Topic → Subtopic definitions (13 subjects)
 │   ├── settings.py          # Settings loader and saver
 │   └── theme.py             # UI theme colours and styling constants
 └── views/
+    ├── __init__.py
     ├── dashboard.py         # Home screen with daily progress and due-card summary
     ├── library.py           # Browse subjects and topics
-    ├── study.py             # Interactive study session with SM-2 rating
+    ├── study.py             # Interactive study session with rating buttons
     ├── create_mcq.py        # Create / edit MCQ form — save returns to MCQ list
     ├── import_view.py       # Bulk CSV import with template download
     └── manage.py            # Paginated search and manage all MCQs
@@ -226,18 +230,20 @@ Subjects, topics, and subtopics are defined in `core/taxonomy.py` and drive the 
 
 ---
 
-## Spaced Repetition Algorithm
+## Scheduling
 
-StudyFlow uses the **SM-2** algorithm. After each answer you rate your recall:
+> **Current behaviour:** Fixed intervals — no adaptive logic yet.
 
-| Rating | Effect |
-|--------|--------|
-| **Again (0)** | Resets progress; card shown again tomorrow |
-| **Hard (1)** | Ease −0.15; interval × 1.2 |
-| **Good (2)** | Standard progression; interval × ease factor |
-| **Easy (3)** | Ease +0.15; interval × ease factor × 1.3 |
+After each answer you rate your recall, and the next review date is set to a fixed offset from today:
 
-Ease factor is bounded between **1.3** and **3.0**.
+| Rating | Next review |
+|--------|-------------|
+| **Again (0)** | 1 day — resets repetition count |
+| **Hard (1)** | 1 day |
+| **Good (2)** | 3 days |
+| **Easy (3)** | 5 days |
+
+This keeps scheduling predictable while the question bank is being built and tested. Once the content is stable, fixed intervals will be replaced with the **SM-2** algorithm, which adjusts intervals and ease factors dynamically based on recall history.
 
 ---
 
@@ -271,12 +277,11 @@ The launcher icon uses Android's **Adaptive Icon** system so it renders crisp at
 
 | File | Purpose |
 |---|---|
-| `icon-android.svg` | **Foreground layer** — card-and-waves artwork on a transparent canvas, placed at project root for Flet to pick up |
-| `assets/icon-android.svg` | Copy of the foreground SVG kept inside assets for reference |
+| `assets/icon-android.svg` | **Foreground layer** — card-and-waves artwork on a transparent canvas |
 | `assets/icon.svg` | Full icon with background — fallback for web/desktop |
 | `assets/icon.png` | Raster fallback (1024×1024) |
 | `pyproject.toml` → `adaptive_icon_background` | Background layer colour (`#162040`, dark navy) |
-| `pyproject.toml` → `adaptive_icon_foreground` | Points to `icon-android.svg` at project root |
+| `pyproject.toml` → `adaptive_icon_foreground` | Points to `assets/icon-android.svg` |
 
 ---
 
