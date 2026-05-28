@@ -255,6 +255,9 @@ def build(page: ft.Page, repo: AbstractRepository, navigate,
         repo.save_progress(updated)
         repo.add_review_log(ReviewLog(mcq_id=mcq.id, quality=quality, was_correct=was_correct))
 
+        if quality == 0:
+            queue.append(mcq)
+
         if state["index"] + 1 >= len(queue):
             navigate("complete")
         else:
