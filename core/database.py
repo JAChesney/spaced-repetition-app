@@ -148,6 +148,9 @@ class AbstractRepository(ABC):
     def get_stats(self) -> dict: ...
 
     @abstractmethod
+    def get_next_due_info(self) -> Optional[dict]: ...
+
+    @abstractmethod
     def list_subjects(self) -> list[str]: ...
 
     @abstractmethod
@@ -512,6 +515,23 @@ class SQLiteRepository(AbstractRepository):
             ).fetchone()[0]
         return {"total": total, "due": due, "new": new, "reviewed_today": reviewed_today}
 
+    def get_next_due_info(self) -> Optional[dict]:
+        today = date.today().isoformat()
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT next_review_date, COUNT(*) as count
+                   FROM card_progress
+                   WHERE next_review_date > ? AND repetitions > 0
+                   GROUP BY next_review_date
+                   ORDER BY next_review_date ASC
+                   LIMIT 1""",
+                (today,),
+            ).fetchone()
+        if not row:
+            return None
+        days_until = (date.fromisoformat(row["next_review_date"]) - date.today()).days
+        return {"days_until": days_until, "count": row["count"]}
+
     def list_subjects(self) -> list[str]:
         with self._conn() as conn:
             rows = conn.execute(
@@ -728,6 +748,9 @@ class CachedRepository(AbstractRepository):
 
     def get_stats(self) -> dict:
         return self._local.get_stats()
+
+    def get_next_due_info(self) -> Optional[dict]:
+        return self._local.get_next_due_info()
 
     def list_subjects(self) -> list[str]:
         return self._local.list_subjects()
