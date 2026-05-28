@@ -243,10 +243,62 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
             dlg.open = False
             page.update()
 
+        def _confirm_reset(_):
+            dlg.open = False
+            page.update()
+
+            confirm_dlg = ft.AlertDialog(
+                title=ft.Text("Reset Schedule?", weight=ft.FontWeight.BOLD, color=T.TEXT),
+                bgcolor=T.CARD,
+                content=ft.Text(
+                    "Every card will become due immediately.\n"
+                    "Your progress (ease factor, repetitions) will be kept.",
+                    color=T.TEXT2, size=13,
+                ),
+                actions=[
+                    ft.TextButton("Cancel",
+                                  on_click=lambda _: _close_confirm(),
+                                  style=ft.ButtonStyle(color=T.TEXT2)),
+                    ft.TextButton("Reset",
+                                  on_click=lambda _: _do_reset(),
+                                  style=ft.ButtonStyle(color=ft.Colors.ERROR)),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+                shape=ft.RoundedRectangleBorder(radius=16),
+            )
+
+            def _close_confirm():
+                confirm_dlg.open = False
+                page.update()
+
+            def _do_reset():
+                repo.reset_schedule()
+                confirm_dlg.open = False
+                page.update()
+                navigate("dashboard")
+
+            page.overlay.append(confirm_dlg)
+            confirm_dlg.open = True
+            page.update()
+
         dlg = ft.AlertDialog(
             title=ft.Text("Session Settings", weight=ft.FontWeight.BOLD, color=T.TEXT),
             bgcolor=T.CARD,
-            content=ft.Column([goal_field, due_field, new_field], spacing=14, tight=True),
+            content=ft.Column(
+                [
+                    goal_field, due_field, new_field,
+                    ft.Divider(height=1, color=T.BORDER),
+                    ft.TextButton(
+                        "Reset Schedule",
+                        icon=ft.Icons.RESTART_ALT_ROUNDED,
+                        icon_color=ft.Colors.ERROR,
+                        on_click=_confirm_reset,
+                        style=ft.ButtonStyle(color=ft.Colors.ERROR),
+                    ),
+                ],
+                spacing=14,
+                tight=True,
+            ),
             actions=[
                 ft.TextButton("Cancel", on_click=_cancel,
                               style=ft.ButtonStyle(color=T.TEXT2)),

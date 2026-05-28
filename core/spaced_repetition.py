@@ -5,7 +5,7 @@ quality: 0=Again, 1=Hard, 2=Good, 3=Easy
 from datetime import date, timedelta
 from .models import CardProgress
 
-_INTERVALS = {0: 1, 1: 1, 2: 3, 3: 5}
+_INTERVALS = {0: 1, 1: 2, 2: 3, 3: 4}
 
 
 def review(progress: CardProgress, quality: int) -> CardProgress:

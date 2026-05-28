@@ -156,6 +156,9 @@ class AbstractRepository(ABC):
     @abstractmethod
     def list_topics(self, subject: str = "") -> list[str]: ...
 
+    @abstractmethod
+    def reset_schedule(self) -> None: ...
+
 
 class SQLiteRepository(AbstractRepository):
     def __init__(self, db_path: str = "mcqs.db"):
@@ -482,6 +485,11 @@ class SQLiteRepository(AbstractRepository):
                 )
                 progress.id = cur.lastrowid
         return progress
+
+    def reset_schedule(self) -> None:
+        today = date.today().isoformat()
+        with self._conn() as conn:
+            conn.execute("UPDATE card_progress SET next_review_date=?", (today,))
 
     # --- Review logs ---
 
@@ -849,6 +857,9 @@ class CachedRepository(AbstractRepository):
                      progress.last_reviewed_at.isoformat() if progress.last_reviewed_at else None),
                 )
         return progress
+
+    def reset_schedule(self) -> None:
+        self._local.reset_schedule()
 
     def add_review_log(self, log: ReviewLog) -> ReviewLog:
         row = self._sb.table("review_logs").insert({
