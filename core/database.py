@@ -3,6 +3,7 @@ Repository layer. Swap SQLiteRepository for a Supabase/S3 implementation
 by implementing the same AbstractRepository interface.
 """
 import sqlite3
+import threading
 from abc import ABC, abstractmethod
 from datetime import datetime, date
 from typing import Optional
@@ -810,6 +811,10 @@ class CachedRepository(AbstractRepository):
         self._local.delete_mcq(mcq_id)
 
     def save_progress(self, progress: CardProgress) -> CardProgress:
+        # Write to local SQLite immediately so the UI can advance without waiting for network.
+        self._local.save_progress(progress)
+
+        # Snapshot values for the background thread (avoids capturing a mutable reference).
         data = {
             "mcq_id": progress.mcq_id,
             "ease_factor": progress.ease_factor,
@@ -820,60 +825,43 @@ class CachedRepository(AbstractRepository):
                 progress.last_reviewed_at.isoformat() if progress.last_reviewed_at else None
             ),
         }
-        existing = (
-            self._sb.table("card_progress")
-            .select("id").eq("mcq_id", progress.mcq_id).execute().data
-        )
-        if existing:
-            row = (
-                self._sb.table("card_progress")
-                .update(data).eq("mcq_id", progress.mcq_id).execute().data[0]
-            )
-        else:
-            row = self._sb.table("card_progress").insert(data).execute().data[0]
-        progress.id = row["id"]
-        with self._local._conn() as conn:
-            exists_local = conn.execute(
-                "SELECT id FROM card_progress WHERE mcq_id=?", (progress.mcq_id,)
-            ).fetchone()
-            if exists_local:
-                conn.execute(
-                    """UPDATE card_progress SET ease_factor=?, interval_days=?,
-                       repetitions=?, next_review_date=?, last_reviewed_at=?
-                       WHERE mcq_id=?""",
-                    (progress.ease_factor, progress.interval_days, progress.repetitions,
-                     progress.next_review_date.isoformat(),
-                     progress.last_reviewed_at.isoformat() if progress.last_reviewed_at else None,
-                     progress.mcq_id),
+        mcq_id = progress.mcq_id
+
+        def _sync():
+            try:
+                existing = (
+                    self._sb.table("card_progress")
+                    .select("id").eq("mcq_id", mcq_id).execute().data
                 )
-            else:
-                conn.execute(
-                    """INSERT INTO card_progress
-                       (id, mcq_id, ease_factor, interval_days, repetitions,
-                        next_review_date, last_reviewed_at)
-                       VALUES (?,?,?,?,?,?,?)""",
-                    (progress.id, progress.mcq_id, progress.ease_factor, progress.interval_days,
-                     progress.repetitions, progress.next_review_date.isoformat(),
-                     progress.last_reviewed_at.isoformat() if progress.last_reviewed_at else None),
-                )
+                if existing:
+                    self._sb.table("card_progress").update(data).eq("mcq_id", mcq_id).execute()
+                else:
+                    self._sb.table("card_progress").insert(data).execute()
+            except Exception:
+                pass
+
+        threading.Thread(target=_sync, daemon=True).start()
         return progress
 
     def reset_schedule(self) -> None:
         self._local.reset_schedule()
 
     def add_review_log(self, log: ReviewLog) -> ReviewLog:
-        row = self._sb.table("review_logs").insert({
+        # Write to local SQLite immediately.
+        self._local.add_review_log(log)
+
+        log_data = {
             "mcq_id": log.mcq_id,
             "quality": log.quality,
             "was_correct": log.was_correct,
             "reviewed_at": log.reviewed_at.isoformat(),
-        }).execute().data[0]
-        log.id = row["id"]
-        with self._local._conn() as conn:
-            conn.execute(
-                """INSERT INTO review_logs (id, mcq_id, quality, was_correct, reviewed_at)
-                   VALUES (?,?,?,?,?)""",
-                (log.id, log.mcq_id, log.quality, int(log.was_correct),
-                 log.reviewed_at.isoformat()),
-            )
+        }
+
+        def _sync():
+            try:
+                self._sb.table("review_logs").insert(log_data).execute()
+            except Exception:
+                pass
+
+        threading.Thread(target=_sync, daemon=True).start()
         return log
