@@ -73,6 +73,7 @@ TAXONOMY: dict[str, dict[str, list[str]]] = {
     },
     "Polity": {
         "Constitution": [
+            "Basics of Constitution",
             "Preamble",
             "Fundamental Rights",
             "DPSP",
