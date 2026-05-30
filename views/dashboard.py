@@ -1,8 +1,127 @@
 from datetime import datetime
+import asyncio
 import flet as ft
 from core.database import AbstractRepository, CachedRepository
 from core import theme as T
 from core import settings
+
+
+def build_skeleton(page: ft.Page) -> tuple[ft.Control, list]:
+    """Skeleton dashboard shown while the repo initialises.
+
+    Returns (widget, stop_flag). Set stop_flag[0] = False to end the pulse.
+    """
+    _pulse_boxes: list[ft.Container] = []
+
+    def _skel(width=None, height=12, radius=6) -> ft.Container:
+        c = ft.Container(
+            width=width,
+            height=height,
+            bgcolor=T.BORDER,
+            border_radius=radius,
+            animate_opacity=ft.Animation(700, ft.AnimationCurve.EASE_IN_OUT),
+        )
+        _pulse_boxes.append(c)
+        return c
+
+    def _skel_card(content, padding=16) -> ft.Container:
+        return ft.Container(
+            content=content,
+            bgcolor=T.CARD,
+            border_radius=16,
+            padding=padding,
+            border=ft.Border.all(1, T.BORDER),
+        )
+
+    # Due Today card
+    due_card = _skel_card(
+        ft.Column([
+            ft.Row([_skel(20, 20, 4), _skel(80)], spacing=8),
+            ft.Row(
+                [_skel(72, 48, 8), _skel(50, 20, 4)],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.END,
+            ),
+            ft.Container(height=4),
+            _skel(height=48, radius=12),
+        ], spacing=8),
+        padding=20,
+    )
+
+    # Daily Progress card
+    progress_card = _skel_card(
+        ft.Row([
+            _skel(90, 90, 45),
+            ft.Column([
+                ft.Row([_skel(20, 20, 4), _skel(100)], spacing=8),
+                ft.Row([_skel(60, 48, 8), _skel(40, 20, 4)], spacing=6,
+                       vertical_alignment=ft.CrossAxisAlignment.END),
+                _skel(130, 12, 5),
+            ], spacing=4, expand=True),
+        ], spacing=20, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        padding=20,
+    )
+
+    def _subject_skel() -> ft.Container:
+        return ft.Container(
+            content=ft.Row([
+                _skel(44, 44, 10),
+                ft.Column([_skel(120, 14, 7), _skel(160, 11, 5)], spacing=4, expand=True),
+                _skel(20, 20, 4),
+            ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.Padding.symmetric(vertical=12, horizontal=16),
+            bgcolor=T.CARD,
+            border_radius=14,
+            border=ft.Border.all(1, T.BORDER),
+        )
+
+    top_bar = ft.Container(
+        content=ft.Row([
+            ft.Row([_skel(28, 28, 14), _skel(100, 20, 6)], spacing=8),
+            ft.Container(expand=True),
+            _skel(24, 24, 12),
+        ]),
+        padding=ft.Padding(left=0, right=0, top=8, bottom=8),
+    )
+
+    widget = ft.Column(
+        [
+            top_bar,
+            ft.Column(
+                [
+                    _skel(80, 11, 5),
+                    _skel(180, 26, 8),
+                    ft.Container(height=4),
+                    due_card,
+                    progress_card,
+                    ft.Container(height=4),
+                    ft.Row([_skel(140, 18, 6), ft.Container(expand=True), _skel(80, 14, 5)]),
+                    ft.Column([_subject_skel(), _subject_skel(), _subject_skel()], spacing=8),
+                ],
+                spacing=12,
+                scroll=ft.ScrollMode.AUTO,
+                expand=True,
+            ),
+        ],
+        spacing=0,
+        expand=True,
+        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+    )
+
+    stop_flag = [True]
+
+    async def _pulse():
+        low = True
+        while stop_flag[0]:
+            for b in _pulse_boxes:
+                b.opacity = 0.3 if low else 1.0
+            page.update()
+            low = not low
+            await asyncio.sleep(0.75)
+
+    page.run_task(_pulse)
+
+    return widget, stop_flag
 
 
 def _greeting() -> str:
@@ -106,61 +225,73 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
 
     # --- Daily Progress card ---
     goal_label = f"{reviewed}/{daily_goal} cards reviewed"
-    progress_card = _card(
-        ft.Column(
-            [
-                ft.Stack(
+    ring = ft.Stack(
+        [
+            ft.Container(
+                content=ft.ProgressRing(
+                    value=goal_pct,
+                    width=90,
+                    height=90,
+                    stroke_width=9,
+                    color=T.ACCENT,
+                    bgcolor=T.BORDER,
+                ),
+                alignment=ft.Alignment.CENTER,
+                width=90,
+                height=90,
+            ),
+            ft.Container(
+                content=ft.Column(
                     [
-                        ft.Container(
-                            content=ft.ProgressRing(
-                                value=goal_pct,
-                                width=120,
-                                height=120,
-                                stroke_width=10,
-                                color=T.ACCENT,
-                                bgcolor=T.BORDER,
-                            ),
-                            alignment=ft.Alignment.CENTER,
-                            width=120,
-                            height=120,
+                        ft.Text(
+                            f"{round(goal_pct * 100)}%",
+                            size=20,
+                            weight=ft.FontWeight.BOLD,
+                            color=T.TEXT,
                         ),
-                        ft.Container(
-                            content=ft.Column(
-                                [
-                                    ft.Text(
-                                        f"{round(goal_pct * 100)}%",
-                                        size=26,
-                                        weight=ft.FontWeight.BOLD,
-                                        color=T.TEXT,
-                                    ),
-                                    ft.Text("GOAL", size=11, color=T.TEXT2),
-                                ],
-                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                                alignment=ft.MainAxisAlignment.CENTER,
-                                spacing=0,
-                            ),
-                            left=0,
-                            top=0,
-                            width=120,
-                            height=120,
-                        ),
+                        ft.Text("GOAL", size=10, color=T.TEXT2),
                     ],
-                    width=120,
-                    height=120,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=0,
                 ),
-                ft.Text(
-                    "Daily Progress",
-                    size=16,
-                    weight=ft.FontWeight.BOLD,
-                    color=T.TEXT,
-                    text_align=ft.TextAlign.CENTER,
+                left=0,
+                top=0,
+                width=90,
+                height=90,
+            ),
+        ],
+        width=90,
+        height=90,
+    )
+    progress_card = _card(
+        ft.Row(
+            [
+                ring,
+                ft.Column(
+                    [
+                        ft.Row([
+                            ft.Icon(ft.Icons.TRACK_CHANGES_ROUNDED, color=T.ACCENT, size=20),
+                            ft.Text("Daily Progress", color=T.TEXT2, size=13),
+                        ], spacing=8),
+                        ft.Row(
+                            [
+                                ft.Text(str(reviewed), size=48, weight=ft.FontWeight.BOLD, color=T.TEXT),
+                                ft.Text(f"/ {daily_goal}", size=16, color=T.TEXT2),
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.END,
+                            spacing=6,
+                        ),
+                        ft.Text("cards reviewed today", size=12, color=T.TEXT2),
+                    ],
+                    spacing=4,
                 ),
-                ft.Text(goal_label, size=13, color=T.TEXT2, text_align=ft.TextAlign.CENTER),
             ],
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=10,
+            spacing=20,
+            alignment=ft.MainAxisAlignment.CENTER,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
-        padding=24,
+        padding=20,
     )
 
     # --- Recent Subjects ---
