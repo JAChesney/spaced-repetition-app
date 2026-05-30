@@ -63,38 +63,70 @@ def main(page: ft.Page):
     page.add(splash)
     page.update()
 
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    supabase_key = os.environ.get("SUPABASE_KEY", "")
+
     async def _launch():
+        loop = asyncio.get_event_loop()
+
+        # Start repo init (Supabase sync) in a thread so it races the 2s timer.
+        if supabase_url and supabase_key:
+            repo_future = loop.run_in_executor(
+                None,
+                lambda: CachedRepository(supabase_url=supabase_url, supabase_key=supabase_key),
+            )
+        else:
+            repo_future = None
+
         await asyncio.sleep(2)
+
+        # Show skeleton while waiting for Supabase sync to finish.
+        page.controls.clear()
+        from views.dashboard import build_skeleton
+        skeleton, stop_pulse = build_skeleton(page)
+        page.add(
+            ft.Container(
+                content=skeleton,
+                expand=True,
+                bgcolor=T.BG,
+                padding=ft.Padding(left=20, right=20, top=0, bottom=0),
+            )
+        )
+        page.update()
+
+        if not supabase_url or not supabase_key:
+            stop_pulse[0] = False
+            page.controls.clear()
+            page.add(ft.Text(
+                f"Missing credentials.\n.env path: {Path(__file__).parent / '.env'}\n"
+                f"Exists: {(Path(__file__).parent / '.env').exists()}",
+                color=ft.Colors.ERROR, selectable=True,
+            ))
+            page.update()
+            return
+
+        try:
+            repo = await repo_future
+        except Exception:
+            stop_pulse[0] = False
+            import traceback
+            page.controls.clear()
+            page.add(ft.Text(
+                f"Repo init error:\n{traceback.format_exc()}",
+                color=ft.Colors.ERROR, selectable=True,
+            ))
+            page.update()
+            return
+
+        stop_pulse[0] = False
         page.controls.clear()
         page.update()
-        _start_app(page)
+        _start_app(page, repo)
 
     page.run_task(_launch)
 
 
-def _start_app(page: ft.Page):
-    supabase_url = os.environ.get("SUPABASE_URL", "")
-    supabase_key = os.environ.get("SUPABASE_KEY", "")
-    if not supabase_url or not supabase_key:
-        import traceback
-        page.add(ft.Text(
-            f"Missing credentials.\n.env path: {Path(__file__).parent / '.env'}\n"
-            f"Exists: {(Path(__file__).parent / '.env').exists()}",
-            color=ft.Colors.ERROR, selectable=True,
-        ))
-        page.update()
-        return
-
-    try:
-        repo = CachedRepository(supabase_url=supabase_url, supabase_key=supabase_key)
-    except Exception as e:
-        import traceback
-        page.add(ft.Text(
-            f"Repo init error:\n{traceback.format_exc()}",
-            color=ft.Colors.ERROR, selectable=True,
-        ))
-        page.update()
-        return
+def _start_app(page: ft.Page, repo: CachedRepository):
     content = ft.Column(expand=True, spacing=0)
     selected_index = [0]
 
