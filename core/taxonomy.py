@@ -95,8 +95,7 @@ TAXONOMY: dict[str, dict[str, list[str]]] = {
             "Cabinet",
         ],
         "Judiciary": [
-            "Supreme Court",
-            "High Courts",
+            "Supreme & High Court",
             "Judicial Review",
             "PIL",
         ],
@@ -327,7 +326,10 @@ TAXONOMY: dict[str, dict[str, list[str]]] = {
         "Others": [],
     },
     "Miscellaneous": {
-        "Books and Authors": [],
+        "Books and Authors": [
+            "Biographies",
+            "National Authors",
+        ],
         "Obituaries": [],
         "Appointments": [],
         "Reports and Indices": [],

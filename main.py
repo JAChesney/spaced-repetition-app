@@ -34,7 +34,7 @@ def main(page: ft.Page):
     page.title = "StudyFlow"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = T.BG
-    page.padding = ft.Padding(left=0, right=0, top=46, bottom=0)
+    page.padding = 0
     page.window.min_width = 360
     page.window.min_height = 640
 
@@ -43,33 +43,13 @@ def main(page: ft.Page):
     if os.path.exists(_icon_path):
         page.window.icon = _icon_path
 
-    # ── Splash screen ────────────────────────────────────────────────────────
-    splash = ft.Container(
-        content=ft.Column(
-            [
-                ft.Image(src="assets/icon-android.svg", width=120, height=120, fit="contain"),
-                ft.Text("StudyFlow", size=32, weight=ft.FontWeight.BOLD, color=T.TEXT),
-                ft.Text("Spaced Repetition Learning", size=14, color=T.TEXT2),
-            ],
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            alignment=ft.MainAxisAlignment.CENTER,
-            spacing=16,
-        ),
-        expand=True,
-        bgcolor=T.BG,
-        alignment=ft.Alignment.CENTER,
-        padding=ft.Padding(left=24, right=24, top=0, bottom=0),
-    )
-    page.add(splash)
-    page.update()
-
     supabase_url = os.environ.get("SUPABASE_URL", "")
     supabase_key = os.environ.get("SUPABASE_KEY", "")
 
     async def _launch():
         loop = asyncio.get_event_loop()
 
-        # Start repo init (Supabase sync) in a thread so it races the 2s timer.
+        # Start repo init (Supabase sync) in a thread so it races the 2s splash.
         if supabase_url and supabase_key:
             repo_future = loop.run_in_executor(
                 None,
@@ -78,9 +58,32 @@ def main(page: ft.Page):
         else:
             repo_future = None
 
-        await asyncio.sleep(2)
+        # On desktop show a branded splash for 2s. On Android the native splash
+        # already handles this — adding a Python splash there causes a squished
+        # flicker followed by a blank frame, so we skip it.
+        is_android = str(page.platform).lower() == "android"
+        if not is_android:
+            page.add(
+                ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Image(src="assets/icon.png", width=160, height=160, fit="contain"),
+                            ft.Text("StudyFlow", size=32, weight=ft.FontWeight.BOLD, color=T.TEXT),
+                            ft.Text("Spaced Repetition Learning", size=18, color=T.TEXT2),
+                        ],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=16,
+                    ),
+                    expand=True,
+                    bgcolor="#1B2444",
+                    alignment=ft.Alignment.CENTER,
+                )
+            )
+            page.update()
+            await asyncio.sleep(2)
 
-        # Show skeleton while waiting for Supabase sync to finish.
+        # Switch to skeleton while waiting for Supabase sync to finish.
         page.controls.clear()
         from views.dashboard import build_skeleton
         skeleton, stop_pulse = build_skeleton(page)
@@ -89,7 +92,7 @@ def main(page: ft.Page):
                 content=skeleton,
                 expand=True,
                 bgcolor=T.BG,
-                padding=ft.Padding(left=20, right=20, top=0, bottom=0),
+                padding=ft.Padding(left=20, right=20, top=46, bottom=0),
             )
         )
         page.update()
@@ -217,14 +220,20 @@ def _start_app(page: ft.Page, repo: CachedRepository):
         page.update()
 
     navigate("dashboard")
-    page.add(ft.Column(
-        [
-            ft.Container(content=content, padding=ft.Padding(left=20, right=20, top=0, bottom=0), expand=True),
-            nav_container,
-        ],
-        spacing=0,
-        expand=True,
-    ))
+    page.add(
+        ft.Container(
+            content=ft.Column(
+                [
+                    ft.Container(content=content, padding=ft.Padding(left=20, right=20, top=0, bottom=0), expand=True),
+                    nav_container,
+                ],
+                spacing=0,
+                expand=True,
+            ),
+            padding=ft.Padding(left=0, right=0, top=46, bottom=0),
+            expand=True,
+        )
+    )
 
 
 if __name__ == "__main__":

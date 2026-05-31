@@ -7,6 +7,10 @@ version = "1.0.0"
 [tool.flet]
 product = "StudyFlow"
 icon = "assets/icon.svg"
+compile_app = true
+compile_packages = true
+cleanup_app = true
+cleanup_packages = true
 
 [tool.flet.android]
 # Adaptive icon background colour — this is the "canvas" behind the foreground SVG.
@@ -17,3 +21,16 @@ adaptive_icon_background = "#162040"
 # Keeping foreground separate prevents Android from scaling down a flattened PNG
 # which was causing the blurry icon on the home screen.
 adaptive_icon_foreground = "assets/icon.svg"
+# Build a separate APK per CPU architecture instead of one fat APK.
+# arm64-v8a covers virtually all modern Android phones and will be ~68 MB.
+split_per_abi = true
+
+[tool.flet.splash]
+# Background colour shown on Android 12+ (OS enforces icon-only splash there).
+# On older Android the full splash.png image is shown instead.
+color = "#1B2444"
+dark_color = "#1B2444"
+# Full branded splash image (icon + text). Create as a PNG at ~1080x1920.
+# Place the file at assets/splash.png before running flet build.
+image = "assets/splash.png"
+dark_image = "assets/splash.png"

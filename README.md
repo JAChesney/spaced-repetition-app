@@ -128,7 +128,8 @@ SpacedRepetitionApp/
 │   ├── icon.svg             # Full icon with background — fallback for web/desktop
 │   ├── icon.ico             # Windows desktop icon (multi-size 16–256px)
 │   ├── icon-android.svg     # Android adaptive icon foreground (transparent canvas)
-│   └── icon-android.ico     # Android icon in ICO format
+│   ├── icon-android.ico     # Android icon in ICO format
+│   └── splash.png           # Native Android splash screen image (1080×1920)
 ├── core/
 │   ├── __init__.py
 │   ├── database.py          # Repository layer: AbstractRepository, SQLiteRepository, CachedRepository
@@ -259,16 +260,37 @@ Flet packages the app as an Android APK using Flutter under the hood.
 
 ### Build
 
+Use the full command below to produce a lean, split APK. Without the exclude and compile flags, the build bundles the local virtual environment (`sraenv`, ~265 MB) and git history (~40 MB) into the app, bloating each APK to ~200 MB.
+
 ```bash
-flet build apk --clear-cache
+flet build apk --clear-cache -v --split-per-abi --exclude sraenv --exclude .git --exclude build --exclude mcqs.db --compile-app --compile-packages --cleanup-app --cleanup-packages
 ```
 
-The generated APK will be at `build/apk/app-release.apk`.
+| Flag | Purpose |
+|---|---|
+| `--split-per-abi` | Produces a separate APK per CPU architecture (~68 MB each) instead of one fat APK (~200 MB) |
+| `--exclude sraenv` | Excludes the local Python virtual environment from the bundle |
+| `--exclude .git` | Excludes git history |
+| `--exclude build` | Excludes previous build artefacts |
+| `--exclude mcqs.db` | Excludes the dev database (Android builds from Supabase at runtime) |
+| `--compile-app` | Compiles app `.py` files to bytecode and strips source |
+| `--compile-packages` | Same for all installed packages |
+| `--cleanup-app/packages` | Strips tests, `__pycache__`, `.pyi` stubs, etc. |
+
+Three APKs will be generated in `build/apk/`:
+
+| APK | Target | Size |
+|---|---|---|
+| `StudyFlow-arm64-v8a.apk` | Modern Android phones (2018+) | ~68 MB |
+| `StudyFlow-armeabi-v7a.apk` | Older 32-bit phones | ~60 MB |
+| `StudyFlow-x86_64.apk` | Emulators / Chromebooks | ~68 MB |
+
+**Use `arm64-v8a` for virtually all modern Android devices.**
 
 ### Install on device
 
 ```bash
-adb install build/apk/app-release.apk
+adb install build/apk/StudyFlow-arm64-v8a.apk
 ```
 
 ### App icon (Android Adaptive Icon)

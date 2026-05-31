@@ -96,8 +96,8 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                 )
                 repo.add_mcq(mcq)
                 ok += 1
-            except (KeyError, ValueError) as exc:
-                errors.append(f"Row {i}: {exc}")
+            except Exception as exc:
+                errors.append(f"Row {i}: {type(exc).__name__}: {exc}")
 
         show_result(ok, errors)
         if ok > 0:
