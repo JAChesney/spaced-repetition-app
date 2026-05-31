@@ -27,8 +27,9 @@ class CardProgress:
     ease_factor: float = 2.5
     interval_days: int = 0
     repetitions: int = 0
-    next_review_date: date = field(default_factory=date.today)
+    next_review_date: datetime = field(default_factory=datetime.now)
     last_reviewed_at: Optional[datetime] = None
+    again_count: int = 0   # cumulative Again presses; drives the requeue cycle
     id: Optional[int] = None
 
 

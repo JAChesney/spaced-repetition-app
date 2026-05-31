@@ -174,8 +174,16 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
         next_info = repo.get_next_due_info()
         if next_info:
             d = next_info["days_until"]
+            m = next_info.get("minutes_until", 0)
             n = next_info["count"]
-            when = "tomorrow" if d == 1 else f"in {d} days"
+            if d == 0 and m < 60:
+                when = f"in {max(m, 1)} min"
+            elif d == 0:
+                when = f"in {m // 60}h"
+            elif d == 1:
+                when = "tomorrow"
+            else:
+                when = f"in {d} days"
             label = f"Next: {n} card{'s' if n != 1 else ''} due {when}"
             next_due_text = ft.Row(
                 [

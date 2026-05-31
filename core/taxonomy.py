@@ -58,8 +58,7 @@ TAXONOMY: dict[str, dict[str, list[str]]] = {
         "World Geography": [
             "Continents",
             "Oceans",
-            "Countries",
-            "Capitals",
+            "Countries and their Capital",
             "Important Straits",
             "Climate Regions",
         ],

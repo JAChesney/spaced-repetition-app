@@ -177,8 +177,36 @@ def _start_app(page: ft.Page, repo: CachedRepository):
 
         if route == "dashboard":
             selected_index[0] = 0
-            import views.dashboard as v
-            content.controls.append(v.build(page, repo, navigate))
+            import views.dashboard as vdash
+
+            # Show dashboard immediately from local data — no skeleton flash.
+            content.controls.append(vdash.build(page, repo, navigate))
+
+            async def _refresh_dashboard():
+                loop = asyncio.get_event_loop()
+                # First refresh: pull from Supabase then silently update.
+                await loop.run_in_executor(None, repo.soft_sync)
+                if selected_index[0] != 0:
+                    return
+                content.controls.clear()
+                content.controls.append(vdash.build(page, repo, navigate))
+                page.update()
+
+                # Keep refreshing while the dashboard is open.
+                while selected_index[0] == 0:
+                    next_info = repo.get_next_due_info()
+                    secs = next_info["seconds_until"] if next_info else 30
+                    await asyncio.sleep(min(secs, 30))
+                    if selected_index[0] != 0:
+                        break
+                    await loop.run_in_executor(None, repo.soft_sync)
+                    if selected_index[0] != 0:
+                        break
+                    content.controls.clear()
+                    content.controls.append(vdash.build(page, repo, navigate))
+                    page.update()
+
+            page.run_task(_refresh_dashboard)
 
         elif route == "library":
             selected_index[0] = 1
@@ -203,14 +231,17 @@ def _start_app(page: ft.Page, repo: CachedRepository):
             content.controls.append(v.build_complete(repo, navigate))
 
         elif route == "create":
+            selected_index[0] = -1  # stops the dashboard refresh loop
             import views.create_mcq as v
             content.controls.append(v.build(page, repo, navigate))
 
         elif route == "edit":
+            selected_index[0] = -1
             import views.create_mcq as v
             content.controls.append(v.build(page, repo, navigate, edit_mcq=data))
 
         elif route == "manage":
+            selected_index[0] = -1
             import views.manage as v
             content.controls.append(
                 v.build(page, repo, navigate, on_edit=lambda m: navigate("edit", data=m))

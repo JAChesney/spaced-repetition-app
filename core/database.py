@@ -88,17 +88,20 @@ class _SupabaseClient:
 
 
 def _norm_dt(val) -> Optional[str]:
-    """Convert a Supabase ISO timestamp to a naive UTC string SQLite can store."""
+    """Strip timezone offset from a Supabase ISO timestamp.
+
+    Keeps the T separator so the result is consistent with Python's
+    datetime.isoformat() output and string comparisons work correctly.
+    """
     if not val:
         return None
     s = str(val).replace("Z", "+00:00")
-    # Strip timezone offset so datetime.fromisoformat works on all Python 3.7+
     for sep in ("+", "-"):
         idx = s.rfind(sep, 10)
         if idx != -1:
             s = s[:idx]
             break
-    return s.replace("T", " ")
+    return s
 
 
 class AbstractRepository(ABC):
@@ -159,6 +162,10 @@ class AbstractRepository(ABC):
 
     @abstractmethod
     def reset_schedule(self) -> None: ...
+
+    def soft_sync(self) -> None:
+        """Refresh card_progress from remote without wiping local data.
+        No-op for local-only repos; overridden by CachedRepository."""
 
 
 class SQLiteRepository(AbstractRepository):
@@ -225,14 +232,22 @@ class SQLiteRepository(AbstractRepository):
 
     def _migrate_schema(self, conn: sqlite3.Connection) -> None:
         """Add columns introduced after the initial schema (safe to run on any DB version)."""
-        existing = {row[1] for row in conn.execute("PRAGMA table_info(mcqs)").fetchall()}
-        migrations = [
+        existing_mcqs = {row[1] for row in conn.execute("PRAGMA table_info(mcqs)").fetchall()}
+        mcq_migrations = [
             ("subtopic",      "ALTER TABLE mcqs ADD COLUMN subtopic TEXT NOT NULL DEFAULT ''"),
             ("question_type", "ALTER TABLE mcqs ADD COLUMN question_type TEXT NOT NULL DEFAULT 'STATIC'"),
             ("event_date",    "ALTER TABLE mcqs ADD COLUMN event_date TEXT"),
         ]
-        for col, sql in migrations:
-            if col not in existing:
+        for col, sql in mcq_migrations:
+            if col not in existing_mcqs:
+                conn.execute(sql)
+
+        existing_cp = {row[1] for row in conn.execute("PRAGMA table_info(card_progress)").fetchall()}
+        cp_migrations = [
+            ("again_count", "ALTER TABLE card_progress ADD COLUMN again_count INTEGER NOT NULL DEFAULT 0"),
+        ]
+        for col, sql in cp_migrations:
+            if col not in existing_cp:
                 conn.execute(sql)
 
     # --- MCQ CRUD ---
@@ -312,7 +327,7 @@ class SQLiteRepository(AbstractRepository):
         return sql, params
 
     def get_due_mcqs(self, limit: int = 20, subject: str = "", topic: str = "") -> list[MCQ]:
-        today = date.today().isoformat()
+        today = datetime.now().isoformat()
         sql = """SELECT m.* FROM mcqs m
                  JOIN card_progress cp ON cp.mcq_id = m.id
                  WHERE cp.next_review_date <= ? AND cp.repetitions > 0"""
@@ -330,10 +345,12 @@ class SQLiteRepository(AbstractRepository):
         return [self._row_to_mcq(r) for r in rows]
 
     def get_new_mcqs(self, limit: int = 20, subject: str = "", topic: str = "") -> list[MCQ]:
+        now = datetime.now().isoformat()
         sql = """SELECT m.* FROM mcqs m
                  LEFT JOIN card_progress cp ON cp.mcq_id = m.id
-                 WHERE (cp.mcq_id IS NULL OR cp.repetitions = 0)"""
-        params: list = []
+                 WHERE (cp.mcq_id IS NULL
+                        OR (cp.repetitions = 0 AND cp.next_review_date <= ?))"""
+        params: list = [now]
         if subject:
             sql += " AND m.subject=?"
             params.append(subject)
@@ -347,7 +364,7 @@ class SQLiteRepository(AbstractRepository):
         return [self._row_to_mcq(r) for r in rows]
 
     def get_subject_stats(self) -> list[dict]:
-        today = date.today().isoformat()
+        today = datetime.now().isoformat()
         with self._conn() as conn:
             subjects = [r[0] for r in conn.execute(
                 "SELECT DISTINCT subject FROM mcqs WHERE subject != '' ORDER BY subject"
@@ -379,7 +396,7 @@ class SQLiteRepository(AbstractRepository):
         return result
 
     def get_topic_stats(self, subject: str) -> list[dict]:
-        today = date.today().isoformat()
+        today = datetime.now().isoformat()
         with self._conn() as conn:
             topics = [r[0] for r in conn.execute(
                 "SELECT DISTINCT topic FROM mcqs WHERE subject=? AND topic!='' ORDER BY topic",
@@ -408,7 +425,7 @@ class SQLiteRepository(AbstractRepository):
         return result
 
     def get_recent_subject_activity(self, limit: int = 3) -> list[dict]:
-        today = date.today().isoformat()
+        today = datetime.now().isoformat()
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT m.subject, MAX(rl.reviewed_at) as last_activity
@@ -467,30 +484,32 @@ class SQLiteRepository(AbstractRepository):
             if existing:
                 conn.execute(
                     """UPDATE card_progress SET ease_factor=?, interval_days=?,
-                       repetitions=?, next_review_date=?, last_reviewed_at=?
+                       repetitions=?, next_review_date=?, last_reviewed_at=?, again_count=?
                        WHERE mcq_id=?""",
                     (progress.ease_factor, progress.interval_days, progress.repetitions,
                      progress.next_review_date.isoformat(),
                      progress.last_reviewed_at.isoformat() if progress.last_reviewed_at else None,
-                     progress.mcq_id),
+                     progress.again_count, progress.mcq_id),
                 )
                 progress.id = existing["id"]
             else:
                 cur = conn.execute(
                     """INSERT INTO card_progress
-                       (mcq_id, ease_factor, interval_days, repetitions, next_review_date, last_reviewed_at)
-                       VALUES (?,?,?,?,?,?)""",
+                       (mcq_id, ease_factor, interval_days, repetitions, next_review_date,
+                        last_reviewed_at, again_count)
+                       VALUES (?,?,?,?,?,?,?)""",
                     (progress.mcq_id, progress.ease_factor, progress.interval_days,
                      progress.repetitions, progress.next_review_date.isoformat(),
-                     progress.last_reviewed_at.isoformat() if progress.last_reviewed_at else None),
+                     progress.last_reviewed_at.isoformat() if progress.last_reviewed_at else None,
+                     progress.again_count),
                 )
                 progress.id = cur.lastrowid
         return progress
 
     def reset_schedule(self) -> None:
-        today = date.today().isoformat()
+        now = datetime.now().isoformat()
         with self._conn() as conn:
-            conn.execute("UPDATE card_progress SET next_review_date=?", (today,))
+            conn.execute("UPDATE card_progress SET next_review_date=?", (now,))
 
     # --- Review logs ---
 
@@ -506,7 +525,7 @@ class SQLiteRepository(AbstractRepository):
     # --- Stats & metadata ---
 
     def get_stats(self) -> dict:
-        today = date.today().isoformat()
+        today = datetime.now().isoformat()
         with self._conn() as conn:
             total = conn.execute("SELECT COUNT(*) FROM mcqs").fetchone()[0]
             due = conn.execute(
@@ -517,29 +536,39 @@ class SQLiteRepository(AbstractRepository):
             new = conn.execute(
                 """SELECT COUNT(*) FROM mcqs m
                    LEFT JOIN card_progress cp ON cp.mcq_id = m.id
-                   WHERE cp.mcq_id IS NULL OR cp.repetitions = 0""",
+                   WHERE cp.mcq_id IS NULL
+                         OR (cp.repetitions = 0 AND cp.next_review_date <= ?)""",
+                (today,),
             ).fetchone()[0]
             reviewed_today = conn.execute(
-                "SELECT COUNT(*) FROM review_logs WHERE date(reviewed_at)=?", (today,)
+                "SELECT COUNT(*) FROM review_logs WHERE date(reviewed_at)=date(?)", (today,)
             ).fetchone()[0]
         return {"total": total, "due": due, "new": new, "reviewed_today": reviewed_today}
 
     def get_next_due_info(self) -> Optional[dict]:
-        today = date.today().isoformat()
+        now = datetime.now().isoformat()
         with self._conn() as conn:
             row = conn.execute(
-                """SELECT next_review_date, COUNT(*) as count
+                """SELECT MIN(next_review_date) as next_review_date, COUNT(*) as count
                    FROM card_progress
-                   WHERE next_review_date > ? AND repetitions > 0
-                   GROUP BY next_review_date
-                   ORDER BY next_review_date ASC
+                   WHERE next_review_date > ?
+                   GROUP BY strftime('%Y-%m-%dT%H', next_review_date)
+                   ORDER BY MIN(next_review_date) ASC
                    LIMIT 1""",
-                (today,),
+                (now,),
             ).fetchone()
         if not row:
             return None
-        days_until = (date.fromisoformat(row["next_review_date"]) - date.today()).days
-        return {"days_until": days_until, "count": row["count"]}
+        next_dt = datetime.fromisoformat(row["next_review_date"])
+        seconds_until = max(0.0, (next_dt - datetime.now()).total_seconds())
+        days_until = (next_dt.date() - date.today()).days
+        minutes_until = max(0, int(seconds_until / 60))
+        return {
+            "days_until": days_until,
+            "minutes_until": minutes_until,
+            "seconds_until": seconds_until,
+            "count": row["count"],
+        }
 
     def list_subjects(self) -> list[str]:
         with self._conn() as conn:
@@ -583,15 +612,17 @@ class SQLiteRepository(AbstractRepository):
 
     @staticmethod
     def _row_to_progress(row) -> CardProgress:
+        keys = row.keys()
         return CardProgress(
             id=row["id"],
             mcq_id=row["mcq_id"],
             ease_factor=row["ease_factor"],
             interval_days=row["interval_days"],
             repetitions=row["repetitions"],
-            next_review_date=date.fromisoformat(row["next_review_date"]),
+            next_review_date=datetime.fromisoformat(row["next_review_date"]),
             last_reviewed_at=datetime.fromisoformat(row["last_reviewed_at"])
             if row["last_reviewed_at"] else None,
+            again_count=row["again_count"] if "again_count" in keys else 0,
         )
 
 
@@ -631,11 +662,11 @@ class CachedRepository(AbstractRepository):
         # Re-initialise the local DB (creates a fresh empty schema)
         self._local = SQLiteRepository(self._db_path)
         self.last_sync_error = None
-        self._sync_from_supabase()
+        self._sync_from_supabase(force=True)
 
     # ── Sync ─────────────────────────────────────────────────────────────
 
-    def _sync_from_supabase(self) -> None:
+    def _sync_from_supabase(self, force: bool = False) -> None:
         mcqs = self._sb.table("mcqs").select("*").execute().data
         progress = self._sb.table("card_progress").select("*").execute().data
         logs = self._sb.table("review_logs").select("*").execute().data
@@ -644,6 +675,15 @@ class CachedRepository(AbstractRepository):
         if not mcqs and self._local.count_mcqs() > 0:
             self._migrate_local_to_supabase()
             return
+
+        # Snapshot local card_progress before wiping so we can prefer it when
+        # it is more recent than Supabase (handles daemon-thread sync not
+        # completing before the app was closed).
+        local_cp: dict[int, dict] = {}
+        if not force:
+            with self._local._conn() as snap:
+                for row in snap.execute("SELECT * FROM card_progress").fetchall():
+                    local_cp[row["mcq_id"]] = {k: row[k] for k in row.keys()}
 
         with self._local._conn() as conn:
             # Delete in child-first order to satisfy foreign key constraints
@@ -664,16 +704,69 @@ class CachedRepository(AbstractRepository):
                      m.get("event_date"),
                      _norm_dt(m.get("created_at"))),
                 )
+            supabase_mcq_ids   = {m["id"] for m in mcqs}
+            supabase_cp_ids    = {p["mcq_id"] for p in progress}
+
             for p in progress:
-                conn.execute(
-                    """INSERT INTO card_progress
-                       (id, mcq_id, ease_factor, interval_days, repetitions,
-                        next_review_date, last_reviewed_at)
-                       VALUES (?,?,?,?,?,?,?)""",
-                    (p["id"], p["mcq_id"], p["ease_factor"], p["interval_days"],
-                     p["repetitions"], p.get("next_review_date"),
-                     _norm_dt(p.get("last_reviewed_at"))),
+                sb_reviewed    = _norm_dt(p.get("last_reviewed_at"))
+                local          = local_cp.get(p["mcq_id"])
+                local_reviewed = local.get("last_reviewed_at") if local else None
+
+                # Prefer local when it was reviewed more recently (or when
+                # Supabase has no reviewed_at yet, meaning the background sync
+                # for a first-time Again press never completed).
+                use_local = bool(
+                    local and local_reviewed
+                    and (not sb_reviewed or local_reviewed > sb_reviewed)
                 )
+
+                if use_local:
+                    conn.execute(
+                        """INSERT INTO card_progress
+                           (id, mcq_id, ease_factor, interval_days, repetitions,
+                            next_review_date, last_reviewed_at, again_count)
+                           VALUES (?,?,?,?,?,?,?,?)""",
+                        (p["id"], p["mcq_id"],
+                         local["ease_factor"], local["interval_days"],
+                         local["repetitions"], local["next_review_date"],
+                         local["last_reviewed_at"],
+                         local.get("again_count", 0)),
+                    )
+                else:
+                    sb_nrd    = _norm_dt(p.get("next_review_date")) or ""
+                    local_nrd = (local.get("next_review_date") or "") if local else ""
+                    final_nrd = (
+                        local_nrd
+                        if len(sb_nrd) == 10 and len(local_nrd) > 10
+                        else sb_nrd
+                    )
+                    conn.execute(
+                        """INSERT INTO card_progress
+                           (id, mcq_id, ease_factor, interval_days, repetitions,
+                            next_review_date, last_reviewed_at, again_count)
+                           VALUES (?,?,?,?,?,?,?,?)""",
+                        (p["id"], p["mcq_id"], p["ease_factor"], p["interval_days"],
+                         p["repetitions"], final_nrd,
+                         _norm_dt(p.get("last_reviewed_at")), p.get("again_count", 0)),
+                    )
+
+            # Re-insert local rows for cards that exist in Supabase MCQs but
+            # have no Supabase progress row yet (brand-new card pressed Again
+            # before the background thread finished syncing to Supabase).
+            for mcq_id, local in local_cp.items():
+                if (mcq_id in supabase_mcq_ids
+                        and mcq_id not in supabase_cp_ids
+                        and local.get("last_reviewed_at")):
+                    conn.execute(
+                        """INSERT OR IGNORE INTO card_progress
+                           (mcq_id, ease_factor, interval_days, repetitions,
+                            next_review_date, last_reviewed_at, again_count)
+                           VALUES (?,?,?,?,?,?,?)""",
+                        (mcq_id, local["ease_factor"], local["interval_days"],
+                         local["repetitions"], local["next_review_date"],
+                         local["last_reviewed_at"], local.get("again_count", 0)),
+                    )
+
             for lg in logs:
                 conn.execute(
                     """INSERT INTO review_logs (id, mcq_id, quality, was_correct, reviewed_at)
@@ -810,6 +903,56 @@ class CachedRepository(AbstractRepository):
         self._sb.table("mcqs").delete().eq("id", mcq_id).execute()
         self._local.delete_mcq(mcq_id)
 
+    def soft_sync(self) -> None:
+        """Pull fresh card_progress from Supabase and merge with local SQLite.
+
+        Lighter than a full _sync_from_supabase: does not wipe MCQs or
+        review_logs, and still applies the local-wins merge so any unsynced
+        Again presses are not overwritten.
+        """
+        try:
+            progress = self._sb.table("card_progress").select("*").execute().data
+        except Exception:
+            return  # offline — keep whatever local data we have
+
+        local_cp: dict[int, dict] = {}
+        with self._local._conn() as snap:
+            for row in snap.execute("SELECT * FROM card_progress").fetchall():
+                local_cp[row["mcq_id"]] = {k: row[k] for k in row.keys()}
+
+        with self._local._conn() as conn:
+            for p in progress:
+                sb_reviewed    = _norm_dt(p.get("last_reviewed_at"))
+                local          = local_cp.get(p["mcq_id"])
+                local_reviewed = local.get("last_reviewed_at") if local else None
+
+                use_local = bool(
+                    local and local_reviewed
+                    and (not sb_reviewed or local_reviewed > sb_reviewed)
+                )
+
+                if not use_local:
+                    sb_nrd    = _norm_dt(p.get("next_review_date")) or ""
+                    local_nrd = (local.get("next_review_date") or "") if local else ""
+                    # If Supabase only has a date (column type is 'date', not
+                    # 'text'/'timestamp') keep the local full datetime so we
+                    # don't lose the time component and make the card appear
+                    # immediately due.
+                    final_nrd = (
+                        local_nrd
+                        if len(sb_nrd) == 10 and len(local_nrd) > 10
+                        else sb_nrd
+                    )
+                    conn.execute(
+                        """INSERT OR REPLACE INTO card_progress
+                           (id, mcq_id, ease_factor, interval_days, repetitions,
+                            next_review_date, last_reviewed_at, again_count)
+                           VALUES (?,?,?,?,?,?,?,?)""",
+                        (p["id"], p["mcq_id"], p["ease_factor"], p["interval_days"],
+                         p["repetitions"], final_nrd,
+                         _norm_dt(p.get("last_reviewed_at")), p.get("again_count", 0)),
+                    )
+
     def save_progress(self, progress: CardProgress) -> CardProgress:
         # Write to local SQLite immediately so the UI can advance without waiting for network.
         self._local.save_progress(progress)
@@ -824,6 +967,7 @@ class CachedRepository(AbstractRepository):
             "last_reviewed_at": (
                 progress.last_reviewed_at.isoformat() if progress.last_reviewed_at else None
             ),
+            "again_count": progress.again_count,
         }
         mcq_id = progress.mcq_id
 
@@ -840,7 +984,7 @@ class CachedRepository(AbstractRepository):
             except Exception:
                 pass
 
-        threading.Thread(target=_sync, daemon=True).start()
+        threading.Thread(target=_sync, daemon=False).start()
         return progress
 
     def reset_schedule(self) -> None:
@@ -863,5 +1007,5 @@ class CachedRepository(AbstractRepository):
             except Exception:
                 pass
 
-        threading.Thread(target=_sync, daemon=True).start()
+        threading.Thread(target=_sync, daemon=False).start()
         return log

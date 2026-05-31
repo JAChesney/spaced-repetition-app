@@ -250,13 +250,17 @@ def build(page: ft.Page, repo: AbstractRepository, navigate,
         was_correct = state["selected"] == state["shuffled_correct"]
 
         progress = repo.get_progress(mcq.id) or CardProgress(mcq_id=mcq.id)
-        updated = sm2_review(progress, quality)
+
+        if quality == 0:
+            updated = sm2_review(progress, quality)  # increments progress.again_count internally
+            if updated.again_count % 3 == 1:
+                queue.append(mcq)  # reappear instantly in session (cycle: instant→10min→6h→repeat)
+        else:
+            updated = sm2_review(progress, quality)
+
         updated.last_reviewed_at = datetime.now()
         repo.save_progress(updated)
         repo.add_review_log(ReviewLog(mcq_id=mcq.id, quality=quality, was_correct=was_correct))
-
-        if quality == 0:
-            queue.append(mcq)
 
         if state["index"] + 1 >= len(queue):
             navigate("complete")
