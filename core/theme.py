@@ -8,7 +8,7 @@ TEXT2    = "#6B7FA3"
 TEXT3    = "#94A3B8"
 SUCCESS  = "#22C55E"
 ERROR    = "#EF4444"
-WARN     = "#F59E0B"
+WARN     = "#F97316"
 TEAL     = "#14B8A6"
 
 DAILY_GOAL = 20

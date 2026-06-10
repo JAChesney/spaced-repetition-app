@@ -4,16 +4,20 @@ import os
 _FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "settings.json")
 
 _DEFAULTS: dict = {
-    "daily_goal": 20,
-    "due_cards_limit": 50,
-    "new_cards_limit": 20,
+    "session_size": 100,
 }
 
 
 def load() -> dict:
     try:
         with open(_FILE) as f:
-            return {**_DEFAULTS, **json.load(f)}
+            stored = json.load(f)
+        merged = {**_DEFAULTS, **stored}
+        # Migrate legacy keys
+        if "session_size" not in stored:
+            legacy = stored.get("session_limit") or stored.get("due_cards_limit", 100)
+            merged["session_size"] = max(1, int(legacy))
+        return merged
     except (FileNotFoundError, json.JSONDecodeError):
         return dict(_DEFAULTS)
 

@@ -1,9 +1,16 @@
 import flet as ft
-from datetime import date
+from datetime import datetime
 from core.database import AbstractRepository
 from core.models import MCQ
 from core import theme as T
 from core.taxonomy import subjects, topics, subtopics
+
+_MONTHS = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+]
+_cur = datetime.now().year
+_YEARS = [str(y) for y in range(_cur - 1, _cur + 4)]
 
 
 def _field(label, value="", multiline=False, min_lines=1, max_lines=1):
@@ -56,37 +63,51 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
     correct_dd = _dd("Correct Answer *", ["A", "B", "C", "D"],
                      value=edit_mcq.correct_answer if is_edit else None, width=160)
 
-    # ── event date (shown only for CURRENT_AFFAIRS) ───────────────────────
-    init_date  = edit_mcq.event_date.isoformat() if (is_edit and edit_mcq.event_date) else ""
-    date_field = _field("Event Date (YYYY-MM-DD)", value=init_date)
-    date_field.hint_text  = "e.g. 2025-05-10"
-    date_field.hint_style = ft.TextStyle(color=T.TEXT2)
+    # ── Current Affairs: month + year dropdowns ───────────────────────────
+    # Pre-populate from existing topic (e.g. "January 2026") when editing
+    _ca_parts   = init_top.split() if (is_edit and init_type == "CURRENT_AFFAIRS") else []
+    _init_month = _ca_parts[0] if len(_ca_parts) == 2 else ""
+    _init_year  = _ca_parts[1] if len(_ca_parts) == 2 else str(_cur)
 
-    # No expand=True — direct child of outer Column, expand would be vertical
-    date_slot = ft.Column(
-        controls=[date_field] if init_type == "CURRENT_AFFAIRS" else [],
+    month_dd = _dd("Month *",  _MONTHS, value=_init_month, expand=True)
+    year_dd  = _dd("Year *",   _YEARS,  value=_init_year,  expand=True)
+
+    # Optional free-text subtopic (date like 2026-01-31) for CA
+    ca_subtopic = _field(
+        "Date (optional, e.g. 2026-01-31)",
+        value=init_sub if (is_edit and init_type == "CURRENT_AFFAIRS") else "",
+    )
+
+    # Slot that holds month+year row — only visible for CURRENT_AFFAIRS
+    ca_slot = ft.Column(
+        controls=[ft.Row([month_dd, year_dd], spacing=10)]
+                 if init_type == "CURRENT_AFFAIRS" else [],
         spacing=0,
     )
 
+    # ── type dropdown + change handler ────────────────────────────────────
     def on_type_change(e):
         is_ca = e.control.value == "CURRENT_AFFAIRS"
         if is_ca:
-            date_slot.controls = [date_field]
-            topic_slot.visible = False
-            subtopic_slot.visible = False
+            ca_slot.controls = [ft.Row([month_dd, year_dd], spacing=10)]
+            subject_dd.value = "Current Affairs"
+            state["subject"] = "Current Affairs"
+            state["topic"]   = ""
+            subject_dd.update()
+            topic_slot.visible    = False
+            subtopic_slot.controls = [ca_subtopic]
         else:
-            date_slot.controls = []
-            date_field.value = ""
-            topic_slot.visible = True
-            subtopic_slot.visible = True
-        date_slot.update()
+            ca_slot.controls = []
+            topic_slot.visible    = True
+            subtopic_slot.controls = [_fresh_subtopic_dd(state["subject"], state["topic"])]
+        ca_slot.update()
         topic_slot.update()
         subtopic_slot.update()
 
     _type_opts = [
-        ft.DropdownOption(key="STATIC",          text="Static"),
-        ft.DropdownOption(key="CURRENT_AFFAIRS",  text="Current Affairs"),
-        ft.DropdownOption(key="BIHAR_GK",         text="Bihar GK"),
+        ft.DropdownOption(key="STATIC",         text="Static"),
+        ft.DropdownOption(key="CURRENT_AFFAIRS", text="Current Affairs"),
+        ft.DropdownOption(key="BIHAR_GK",        text="Bihar GK"),
     ]
     type_dd = ft.Dropdown(
         label="Question Type *",
@@ -103,48 +124,44 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
         color=T.TEXT,
     )
 
-    # ── cascading taxonomy ────────────────────────────────────────────────
-    # Define handlers first (before _fresh_* helpers that reference them).
-
+    # ── cascading taxonomy (used for non-CA types) ────────────────────────
     def on_topic_change(e):
         state["topic"] = e.control.value or ""
-        # subtopic_slot is a direct child of outer Column — no expand, just natural height
         subtopic_slot.controls = [_fresh_subtopic_dd(state["subject"], state["topic"])]
         subtopic_slot.update()
 
     def on_subject_change(e):
         state["subject"] = e.control.value or ""
         state["topic"]   = ""
-        # topic_slot is inside a Row — expand=True on the Column = horizontal, correct
         topic_slot.controls = [_fresh_topic_dd(state["subject"])]
         topic_slot.update()
         subtopic_slot.controls = [_fresh_subtopic_dd(state["subject"], "")]
         subtopic_slot.update()
 
     def _fresh_topic_dd(subj):
-        # No expand=True on the dropdown — it's inside a Column, expand would be vertical
         return _dd("Topic *", topics(subj), on_change=on_topic_change)
 
     def _fresh_subtopic_dd(subj, top):
         return _dd("Subtopic (optional)", subtopics(subj, top))
 
-    # Build initial dropdowns
     init_topic_dd    = _fresh_topic_dd(init_subj)
     init_subtopic_dd = _fresh_subtopic_dd(init_subj, init_top)
 
-    if is_edit:
+    if is_edit and init_type != "CURRENT_AFFAIRS":
         if init_top and init_top in [o.key for o in init_topic_dd.options]:
             init_topic_dd.value = init_top
         if init_sub and init_sub in [o.key for o in init_subtopic_dd.options]:
             init_subtopic_dd.value = init_sub
 
-    # topic_slot lives inside ft.Row → expand=True = horizontal expansion (correct)
+    # topic_slot lives inside ft.Row → expand=True = horizontal expansion
     topic_slot = ft.Column([init_topic_dd], spacing=0, expand=True,
                            visible=init_type != "CURRENT_AFFAIRS")
 
-    # subtopic_slot lives directly in outer ft.Column → NO expand (would be vertical = grey block)
-    subtopic_slot = ft.Column([init_subtopic_dd], spacing=0,
-                              visible=init_type != "CURRENT_AFFAIRS")
+    # subtopic_slot: taxonomy dd for non-CA, free text field for CA
+    _init_subtopic_ctrl = (
+        ca_subtopic if init_type == "CURRENT_AFFAIRS" else init_subtopic_dd
+    )
+    subtopic_slot = ft.Column([_init_subtopic_ctrl], spacing=0)
 
     subject_dd = _dd("Subject *", subjects(),
                      value=init_subj or None,
@@ -165,11 +182,15 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
 
     def _topic_value():
         if type_dd.value == "CURRENT_AFFAIRS":
-            return date_field.value.strip() or None
+            m = month_dd.value or ""
+            y = year_dd.value  or ""
+            return f"{m} {y}".strip() or None
         dd = topic_slot.controls[0] if topic_slot.controls else None
         return dd.value if dd else None
 
     def _subtopic_value():
+        if type_dd.value == "CURRENT_AFFAIRS":
+            return ca_subtopic.value.strip()
         dd = subtopic_slot.controls[0] if subtopic_slot.controls else None
         return dd.value if dd else None
 
@@ -188,22 +209,15 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
             error_text.value = "Please select a subject."
             error_text.update()
             return False
-        if type_dd.value != "CURRENT_AFFAIRS" and not _topic_value():
+        if type_dd.value == "CURRENT_AFFAIRS":
+            if not month_dd.value or not year_dd.value:
+                error_text.value = "Please select month and year for Current Affairs."
+                error_text.update()
+                return False
+        elif not _topic_value():
             error_text.value = "Please select a topic."
             error_text.update()
             return False
-        raw = date_field.value.strip()
-        if type_dd.value == "CURRENT_AFFAIRS" and not raw:
-            error_text.value = "Event date is required for Current Affairs."
-            error_text.update()
-            return False
-        if raw:
-            try:
-                date.fromisoformat(raw)
-            except ValueError:
-                error_text.value = "Event date must be YYYY-MM-DD."
-                error_text.update()
-                return False
         error_text.value = ""
         error_text.update()
         return True
@@ -212,8 +226,6 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
     def save(_):
         if not validate():
             return
-        raw         = date_field.value.strip()
-        parsed_date = date.fromisoformat(raw) if raw else None
         mcq = MCQ(
             id=edit_mcq.id if is_edit else None,
             question=q.value.strip(),
@@ -227,7 +239,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
             subtopic=_subtopic_value() or "",
             explanation=expl.value.strip(),
             question_type=type_dd.value or "STATIC",
-            event_date=parsed_date,
+            event_date=None,
         )
         if is_edit:
             repo.update_mcq(mcq)
@@ -242,13 +254,13 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
             correct_dd.update()
             type_dd.value = "STATIC"
             type_dd.update()
-            date_field.value = ""
-            date_slot.controls = []
-            date_slot.update()
+            month_dd.value = None
+            year_dd.value  = None
+            ca_subtopic.value = ""
+            ca_slot.controls = []
+            ca_slot.update()
             topic_slot.visible = True
             topic_slot.update()
-            subtopic_slot.visible = True
-            subtopic_slot.update()
             subject_dd.value = None
             subject_dd.update()
             state["subject"] = ""
@@ -283,8 +295,8 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
                     ft.Row([opt_a, opt_b], spacing=10),
                     ft.Row([opt_c, opt_d], spacing=10),
                     ft.Row([correct_dd, type_dd], spacing=10),
-                    date_slot,
                     ft.Row([subject_dd, topic_slot], spacing=10),
+                    ca_slot,
                     subtopic_slot,
                     expl,
                     error_text,

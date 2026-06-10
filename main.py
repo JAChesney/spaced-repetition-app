@@ -184,27 +184,30 @@ def _start_app(page: ft.Page, repo: CachedRepository):
 
             async def _refresh_dashboard():
                 loop = asyncio.get_event_loop()
-                # First refresh: pull from Supabase then silently update.
-                await loop.run_in_executor(None, repo.soft_sync)
-                if selected_index[0] != 0:
-                    return
-                content.controls.clear()
-                content.controls.append(vdash.build(page, repo, navigate))
-                page.update()
-
-                # Keep refreshing while the dashboard is open.
-                while selected_index[0] == 0:
-                    next_info = repo.get_next_due_info()
-                    secs = next_info["seconds_until"] if next_info else 30
-                    await asyncio.sleep(min(secs, 30))
-                    if selected_index[0] != 0:
-                        break
+                try:
+                    # First refresh: pull from Supabase then silently update.
                     await loop.run_in_executor(None, repo.soft_sync)
                     if selected_index[0] != 0:
-                        break
+                        return
                     content.controls.clear()
                     content.controls.append(vdash.build(page, repo, navigate))
                     page.update()
+
+                    # Keep refreshing while the dashboard is open.
+                    while selected_index[0] == 0:
+                        next_info = repo.get_next_due_info()
+                        secs = next_info["seconds_until"] if next_info else 30
+                        await asyncio.sleep(min(secs, 30))
+                        if selected_index[0] != 0:
+                            break
+                        await loop.run_in_executor(None, repo.soft_sync)
+                        if selected_index[0] != 0:
+                            break
+                        content.controls.clear()
+                        content.controls.append(vdash.build(page, repo, navigate))
+                        page.update()
+                except RuntimeError:
+                    pass  # session destroyed (window closed) — exit loop cleanly
 
             page.run_task(_refresh_dashboard)
 
@@ -220,10 +223,12 @@ def _start_app(page: ft.Page, repo: CachedRepository):
 
         elif route == "study":
             selected_index[0] = 3
-            subject = data.get("subject", "") if isinstance(data, dict) else ""
-            topic = data.get("topic", "") if isinstance(data, dict) else ""
+            subject           = data.get("subject", "")       if isinstance(data, dict) else ""
+            topic             = data.get("topic", "")         if isinstance(data, dict) else ""
+            is_review_session = data.get("review", False)     if isinstance(data, dict) else False
             import views.study as v
-            content.controls.append(v.build(page, repo, navigate, subject=subject, topic=topic))
+            content.controls.append(v.build(page, repo, navigate, subject=subject, topic=topic,
+                                            is_review_session=is_review_session))
 
         elif route == "complete":
             selected_index[0] = 3
@@ -251,6 +256,17 @@ def _start_app(page: ft.Page, repo: CachedRepository):
         page.update()
 
     navigate("dashboard")
+
+    def _on_hidden_change():
+        if selected_index[0] == 1:  # library tab is open
+            import views.library as v
+            content.controls.clear()
+            content.controls.append(v.build(page, repo, navigate))
+            page.update()
+
+    if isinstance(repo, CachedRepository):
+        repo.start_hidden_sync_poll(_on_hidden_change)
+
     page.add(
         ft.Container(
             content=ft.Column(
@@ -265,6 +281,11 @@ def _start_app(page: ft.Page, repo: CachedRepository):
             expand=True,
         )
     )
+
+    async def _init_file_picker():
+        page._shared_file_picker = ft.FilePicker()
+
+    page.run_task(_init_file_picker)
 
 
 if __name__ == "__main__":

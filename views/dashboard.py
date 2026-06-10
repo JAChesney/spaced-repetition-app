@@ -163,10 +163,11 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
     s = settings.load()
     stats = repo.get_stats()
     recent = repo.get_recent_subject_activity(limit=3)
-    total_due = stats["due"] + stats["new"]
-    reviewed = stats["reviewed_today"]
-    daily_goal = s["daily_goal"]
-    goal_pct = min(reviewed / daily_goal, 1.0)
+    total_due   = stats["due"] + stats["new"]
+    review_pool = stats.get("review_pool", 0)
+    retention_7d = stats.get("retention_7d")   # None if no data
+    mastered     = stats.get("mastered", 0)
+    streak       = stats.get("streak", 0)
 
     # --- Next-due countdown (shown only when nothing is due right now) ---
     next_due_text = ft.Container(visible=False)
@@ -194,16 +195,35 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
             )
 
     # --- Due Today card ---
+    if total_due > 0:
+        _due_count = total_due
+        _due_label = "Due Today"
+        _btn_label = "Start Session"
+        _btn_bg    = T.ACCENT
+        _btn_click = lambda _: navigate("study")
+    elif review_pool > 0:
+        _due_count = review_pool
+        _due_label = "Review Due"
+        _btn_label = "Start Review Session"
+        _btn_bg    = T.WARN
+        _btn_click = lambda _: navigate("study", data={"review": True})
+    else:
+        _due_count = 0
+        _due_label = "Due Today"
+        _btn_label = "All Caught Up"
+        _btn_bg    = T.BORDER
+        _btn_click = None
+
     due_card = _card(
         ft.Column(
             [
                 ft.Row([
                     ft.Icon(ft.Icons.CALENDAR_TODAY_ROUNDED, color=T.ACCENT, size=20),
-                    ft.Text("Due Today", color=T.TEXT2, size=13),
+                    ft.Text(_due_label, color=T.TEXT2, size=13),
                 ], spacing=8),
                 ft.Row(
                     [
-                        ft.Text(str(total_due), size=48, weight=ft.FontWeight.BOLD, color=T.TEXT),
+                        ft.Text(str(_due_count), size=48, weight=ft.FontWeight.BOLD, color=T.TEXT),
                         ft.Text("cards", size=16, color=T.TEXT2),
                     ],
                     vertical_alignment=ft.CrossAxisAlignment.END,
@@ -213,17 +233,17 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                 ft.Container(height=4),
                 ft.Container(
                     content=ft.Text(
-                        "Start Session",
+                        _btn_label,
                         color="white",
                         weight=ft.FontWeight.BOLD,
                         size=15,
                         text_align=ft.TextAlign.CENTER,
                     ),
-                    bgcolor=T.ACCENT if total_due > 0 else T.BORDER,
+                    bgcolor=_btn_bg,
                     border_radius=12,
                     padding=ft.Padding.symmetric(vertical=14),
                     alignment=ft.Alignment.CENTER,
-                    on_click=(lambda _: navigate("study")) if total_due > 0 else None,
+                    on_click=_btn_click,
                 ),
             ],
             spacing=8,
@@ -231,75 +251,48 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
         padding=20,
     )
 
-    # --- Daily Progress card ---
-    goal_label = f"{reviewed}/{daily_goal} cards reviewed"
-    ring = ft.Stack(
-        [
-            ft.Container(
-                content=ft.ProgressRing(
-                    value=goal_pct,
-                    width=90,
-                    height=90,
-                    stroke_width=9,
-                    color=T.ACCENT,
-                    bgcolor=T.BORDER,
-                ),
-                alignment=ft.Alignment.CENTER,
-                width=90,
-                height=90,
-            ),
-            ft.Container(
-                content=ft.Column(
-                    [
-                        ft.Text(
-                            f"{round(goal_pct * 100)}%",
-                            size=20,
-                            weight=ft.FontWeight.BOLD,
-                            color=T.TEXT,
-                        ),
-                        ft.Text("GOAL", size=10, color=T.TEXT2),
-                    ],
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    spacing=0,
-                ),
-                left=0,
-                top=0,
-                width=90,
-                height=90,
-            ),
-        ],
-        width=90,
-        height=90,
+    # --- Retention Stats card ---
+    ret_text  = f"{retention_7d}%" if retention_7d is not None else "—"
+    ret_color = (
+        T.SUCCESS if retention_7d is not None and retention_7d >= 80 else
+        T.WARN    if retention_7d is not None and retention_7d >= 60 else
+        T.ERROR   if retention_7d is not None else
+        T.TEXT2
     )
-    progress_card = _card(
-        ft.Row(
+
+    def _stat_col(value: str, label: str, color=None) -> ft.Column:
+        return ft.Column(
             [
-                ring,
-                ft.Column(
+                ft.Text(value, size=30, weight=ft.FontWeight.BOLD,
+                        color=color or T.TEXT, text_align=ft.TextAlign.CENTER),
+                ft.Text(label, size=11, color=T.TEXT2, text_align=ft.TextAlign.CENTER),
+            ],
+            spacing=2,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            expand=True,
+        )
+
+    streak_val = f"{streak} 🔥" if streak >= 3 else str(streak)
+    progress_card = _card(
+        ft.Column(
+            [
+                ft.Row([
+                    ft.Icon(ft.Icons.INSIGHTS_ROUNDED, color=T.ACCENT, size=20),
+                    ft.Text("Performance", color=T.TEXT2, size=13),
+                ], spacing=8),
+                ft.Row(
                     [
-                        ft.Row([
-                            ft.Icon(ft.Icons.TRACK_CHANGES_ROUNDED, color=T.ACCENT, size=20),
-                            ft.Text("Daily Progress", color=T.TEXT2, size=13),
-                        ], spacing=8),
-                        ft.Row(
-                            [
-                                ft.Text(str(reviewed), size=48, weight=ft.FontWeight.BOLD, color=T.TEXT),
-                                ft.Text(f"/ {daily_goal}", size=16, color=T.TEXT2),
-                            ],
-                            vertical_alignment=ft.CrossAxisAlignment.END,
-                            spacing=6,
-                        ),
-                        ft.Text("cards reviewed today", size=12, color=T.TEXT2),
+                        _stat_col(ret_text,      "7-day retention", ret_color),
+                        _stat_col(str(mastered), "mastered"),
+                        _stat_col(streak_val,    "day streak"),
                     ],
                     spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
             ],
-            spacing=20,
-            alignment=ft.MainAxisAlignment.CENTER,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=12,
         ),
-        padding=20,
+        padding=16,
     )
 
     # --- Recent Subjects ---
@@ -365,15 +358,11 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
 
     def open_settings(_):
         cur = settings.load()
-        goal_field = _num_field("Daily Goal (cards/day)", cur["daily_goal"])
-        due_field  = _num_field("Due Cards per Session",  cur["due_cards_limit"])
-        new_field  = _num_field("New Cards per Session",  cur["new_cards_limit"])
+        size_field = _num_field("Cards per Session", cur["session_size"])
 
         def _save(_):
             settings.save({
-                "daily_goal":       max(1, int(goal_field.value or 20)),
-                "due_cards_limit":  max(1, int(due_field.value  or 50)),
-                "new_cards_limit":  max(0, int(new_field.value  or 20)),
+                "session_size": max(1, int(size_field.value or 100)),
             })
             dlg.open = False
             page.update()
@@ -425,7 +414,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
             bgcolor=T.CARD,
             content=ft.Column(
                 [
-                    goal_field, due_field, new_field,
+                    size_field,
                     ft.Divider(height=1, color=T.BORDER),
                     ft.TextButton(
                         "Reset Schedule",

@@ -10,8 +10,8 @@ from typing import Optional
 from .models import MCQ, CardProgress, ReviewLog
 
 
-# ── Minimal Supabase REST client (replaces the 'supabase' pip package) ────────
-# Uses httpx directly so it bundles cleanly on Android.
+# ── Minimal Supabase REST client ──────────────────────────────────────────────
+# Pure httpx — no native extensions, bundles cleanly on Android.
 
 class _Table:
     """PostgREST query builder that mirrors the supabase-py interface."""
@@ -46,6 +46,11 @@ class _Table:
         self._params[column] = f"eq.{value}"
         return self
 
+    def in_(self, column: str, values: list):
+        joined = ",".join(str(v) for v in values)
+        self._params[column] = f"in.({joined})"
+        return self
+
     def execute(self):
         import httpx
         with httpx.Client(headers=self._headers, timeout=30.0) as http:
@@ -55,7 +60,7 @@ class _Table:
                 resp = http.post(self._url, json=self._body, params=self._params)
             elif self._method == "PATCH":
                 resp = http.patch(self._url, json=self._body, params=self._params)
-            else:  # DELETE
+            else:
                 resp = http.delete(self._url, params=self._params)
         resp.raise_for_status()
         data = resp.json() if resp.content else []
@@ -70,8 +75,6 @@ class _Table:
 
 
 class _SupabaseClient:
-    """Thin wrapper around the Supabase REST API — no external package needed."""
-
     def __init__(self, url: str, key: str):
         self._base = url.rstrip("/")
         self._headers = {
@@ -83,8 +86,6 @@ class _SupabaseClient:
 
     def table(self, name: str) -> _Table:
         return _Table(self._base, name, self._headers)
-
-# ──────────────────────────────────────────────────────────────────────────────
 
 
 def _norm_dt(val) -> Optional[str]:
@@ -102,6 +103,19 @@ def _norm_dt(val) -> Optional[str]:
             s = s[:idx]
             break
     return s
+
+
+def _snap_midnight(dt_str: str) -> str:
+    """Snap a future datetime string to midnight of its calendar day.
+
+    Cards should become due at the start of the day, not at the exact time
+    they were reviewed.  Past/already-due dates are left unchanged.
+    """
+    if not dt_str or len(dt_str) < 10:
+        return dt_str
+    if dt_str <= datetime.now().isoformat():
+        return dt_str  # already due — don't touch
+    return dt_str[:10] + "T00:00:00"
 
 
 class AbstractRepository(ABC):
@@ -125,10 +139,13 @@ class AbstractRepository(ABC):
     def count_mcqs(self, subject: str = "", topic: str = "", search: str = "") -> int: ...
 
     @abstractmethod
-    def get_due_mcqs(self, limit: int = 20, subject: str = "", topic: str = "") -> list[MCQ]: ...
+    def get_due_mcqs(self, limit: Optional[int] = None, subject: str = "", topic: str = "") -> list[MCQ]: ...
 
     @abstractmethod
-    def get_new_mcqs(self, limit: int = 20, subject: str = "", topic: str = "") -> list[MCQ]: ...
+    def get_new_mcqs(self, limit: Optional[int] = None, subject: str = "", topic: str = "") -> list[MCQ]: ...
+
+    @abstractmethod
+    def get_review_pool_mcqs(self, limit: Optional[int] = None, subject: str = "", topic: str = "") -> list[MCQ]: ...
 
     @abstractmethod
     def get_subject_stats(self) -> list[dict]: ...
@@ -163,6 +180,24 @@ class AbstractRepository(ABC):
     @abstractmethod
     def reset_schedule(self) -> None: ...
 
+    @abstractmethod
+    def delete_subject(self, subject: str) -> None: ...
+
+    @abstractmethod
+    def delete_topic(self, subject: str, topic: str) -> None: ...
+
+    @abstractmethod
+    def get_hidden_subjects(self) -> set: ...
+
+    @abstractmethod
+    def get_hidden_topics(self) -> set: ...
+
+    @abstractmethod
+    def set_subject_hidden(self, subject: str, hidden: bool) -> None: ...
+
+    @abstractmethod
+    def set_topic_hidden(self, subject: str, topic: str, hidden: bool) -> None: ...
+
     def soft_sync(self) -> None:
         """Refresh card_progress from remote without wiping local data.
         No-op for local-only repos; overridden by CachedRepository."""
@@ -171,16 +206,18 @@ class AbstractRepository(ABC):
 class SQLiteRepository(AbstractRepository):
     def __init__(self, db_path: str = "mcqs.db"):
         self.db_path = db_path
-        self._connection: sqlite3.Connection | None = None
+        self._tls = threading.local()
         self._init_db()
 
     def _conn(self) -> sqlite3.Connection:
-        if self._connection is None:
-            self._connection = sqlite3.connect(self.db_path, check_same_thread=False)
-            self._connection.row_factory = sqlite3.Row
-            self._connection.execute("PRAGMA foreign_keys = ON")
-            self._connection.execute("PRAGMA journal_mode = WAL")
-        return self._connection
+        conn = getattr(self._tls, "connection", None)
+        if conn is None:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            self._tls.connection = conn
+        return conn
 
     def _init_db(self) -> None:
         with self._conn() as conn:
@@ -227,6 +264,16 @@ class SQLiteRepository(AbstractRepository):
                 CREATE INDEX IF NOT EXISTS idx_mcqs_subject_topic ON mcqs(subject, topic);
                 CREATE INDEX IF NOT EXISTS idx_cp_next_review ON card_progress(next_review_date);
                 CREATE INDEX IF NOT EXISTS idx_rl_reviewed_at ON review_logs(reviewed_at);
+
+                CREATE TABLE IF NOT EXISTS hidden_subjects (
+                    subject TEXT PRIMARY KEY
+                );
+
+                CREATE TABLE IF NOT EXISTS hidden_topics (
+                    subject TEXT NOT NULL,
+                    topic   TEXT NOT NULL,
+                    PRIMARY KEY (subject, topic)
+                );
             """)
             self._migrate_schema(conn)
 
@@ -249,6 +296,18 @@ class SQLiteRepository(AbstractRepository):
         for col, sql in cp_migrations:
             if col not in existing_cp:
                 conn.execute(sql)
+
+        # Snap all future next_review_date values to midnight of their calendar day.
+        # Fixes cards scheduled with the old rolling-time formula (now + 24h) so they
+        # appear at the start of the correct day, not at a random time.
+        conn.execute(
+            """UPDATE card_progress
+               SET next_review_date = substr(next_review_date, 1, 10) || 'T00:00:00'
+               WHERE repetitions > 0
+                 AND next_review_date > ?
+                 AND next_review_date NOT LIKE '%T00:00:00'""",
+            (datetime.now().isoformat(),),
+        )
 
     # --- MCQ CRUD ---
 
@@ -326,11 +385,19 @@ class SQLiteRepository(AbstractRepository):
             params.extend([like, like, like, like, like, like, like])
         return sql, params
 
-    def get_due_mcqs(self, limit: int = 20, subject: str = "", topic: str = "") -> list[MCQ]:
+    _VISIBLE_FILTER = """
+        AND m.subject NOT IN (SELECT subject FROM hidden_subjects)
+        AND NOT EXISTS (
+            SELECT 1 FROM hidden_topics ht
+            WHERE ht.subject = m.subject AND ht.topic = m.topic
+        )"""
+
+    def get_due_mcqs(self, limit: Optional[int] = None, subject: str = "", topic: str = "") -> list[MCQ]:
         today = datetime.now().isoformat()
-        sql = """SELECT m.* FROM mcqs m
+        sql = f"""SELECT m.* FROM mcqs m
                  JOIN card_progress cp ON cp.mcq_id = m.id
-                 WHERE cp.next_review_date <= ? AND cp.repetitions > 0"""
+                 WHERE cp.next_review_date <= ? AND cp.repetitions > 0
+                 {self._VISIBLE_FILTER}"""
         params: list = [today]
         if subject:
             sql += " AND m.subject=?"
@@ -338,18 +405,46 @@ class SQLiteRepository(AbstractRepository):
         if topic:
             sql += " AND m.topic=?"
             params.append(topic)
-        sql += " ORDER BY cp.next_review_date ASC LIMIT ?"
-        params.append(limit)
+        sql += " ORDER BY cp.next_review_date ASC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
         with self._conn() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [self._row_to_mcq(r) for r in rows]
 
-    def get_new_mcqs(self, limit: int = 20, subject: str = "", topic: str = "") -> list[MCQ]:
-        now = datetime.now().isoformat()
-        sql = """SELECT m.* FROM mcqs m
+    def get_new_mcqs(self, limit: Optional[int] = None, subject: str = "", topic: str = "") -> list[MCQ]:
+        # Only cards never reviewed (no card_progress row).
+        # Cards reviewed wrong (repetitions=0, last_reviewed_at IS NOT NULL) are served
+        # by get_review_pool_mcqs instead, keeping review cards out of normal sessions.
+        sql = f"""SELECT m.* FROM mcqs m
                  LEFT JOIN card_progress cp ON cp.mcq_id = m.id
-                 WHERE (cp.mcq_id IS NULL
-                        OR (cp.repetitions = 0 AND cp.next_review_date <= ?))"""
+                 WHERE cp.mcq_id IS NULL
+                 {self._VISIBLE_FILTER}"""
+        params: list = []
+        if subject:
+            sql += " AND m.subject=?"
+            params.append(subject)
+        if topic:
+            sql += " AND m.topic=?"
+            params.append(topic)
+        sql += " ORDER BY m.created_at ASC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self._conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._row_to_mcq(r) for r in rows]
+
+    def get_review_pool_mcqs(self, limit: Optional[int] = None, subject: str = "", topic: str = "") -> list[MCQ]:
+        """Cards answered wrong in a previous session, now due for a review round."""
+        now = datetime.now().isoformat()
+        sql = f"""SELECT m.* FROM mcqs m
+                 JOIN card_progress cp ON cp.mcq_id = m.id
+                 WHERE cp.repetitions = 0
+                   AND cp.last_reviewed_at IS NOT NULL
+                   AND cp.next_review_date <= ?
+                 {self._VISIBLE_FILTER}"""
         params: list = [now]
         if subject:
             sql += " AND m.subject=?"
@@ -357,8 +452,10 @@ class SQLiteRepository(AbstractRepository):
         if topic:
             sql += " AND m.topic=?"
             params.append(topic)
-        sql += " ORDER BY m.created_at ASC LIMIT ?"
-        params.append(limit)
+        sql += " ORDER BY cp.next_review_date ASC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
         with self._conn() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [self._row_to_mcq(r) for r in rows]
@@ -506,6 +603,47 @@ class SQLiteRepository(AbstractRepository):
                 progress.id = cur.lastrowid
         return progress
 
+    def delete_subject(self, subject: str) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM mcqs WHERE subject=?", (subject,))
+            conn.execute("DELETE FROM hidden_subjects WHERE subject=?", (subject,))
+            conn.execute("DELETE FROM hidden_topics WHERE subject=?", (subject,))
+
+    def delete_topic(self, subject: str, topic: str) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM mcqs WHERE subject=? AND topic=?", (subject, topic))
+            conn.execute("DELETE FROM hidden_topics WHERE subject=? AND topic=?", (subject, topic))
+
+    def get_hidden_subjects(self) -> set:
+        with self._conn() as conn:
+            rows = conn.execute("SELECT subject FROM hidden_subjects").fetchall()
+        return {r[0] for r in rows}
+
+    def get_hidden_topics(self) -> set:
+        with self._conn() as conn:
+            rows = conn.execute("SELECT subject, topic FROM hidden_topics").fetchall()
+        return {(r[0], r[1]) for r in rows}
+
+    def set_subject_hidden(self, subject: str, hidden: bool) -> None:
+        with self._conn() as conn:
+            if hidden:
+                conn.execute("INSERT OR IGNORE INTO hidden_subjects (subject) VALUES (?)", (subject,))
+            else:
+                conn.execute("DELETE FROM hidden_subjects WHERE subject=?", (subject,))
+
+    def set_topic_hidden(self, subject: str, topic: str, hidden: bool) -> None:
+        with self._conn() as conn:
+            if hidden:
+                conn.execute(
+                    "INSERT OR IGNORE INTO hidden_topics (subject, topic) VALUES (?,?)",
+                    (subject, topic),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM hidden_topics WHERE subject=? AND topic=?",
+                    (subject, topic),
+                )
+
     def reset_schedule(self) -> None:
         now = datetime.now().isoformat()
         with self._conn() as conn:
@@ -526,34 +664,86 @@ class SQLiteRepository(AbstractRepository):
 
     def get_stats(self) -> dict:
         today = datetime.now().isoformat()
+        vf = self._VISIBLE_FILTER
         with self._conn() as conn:
             total = conn.execute("SELECT COUNT(*) FROM mcqs").fetchone()[0]
             due = conn.execute(
-                """SELECT COUNT(*) FROM card_progress
-                   WHERE next_review_date <= ? AND repetitions > 0""",
+                f"""SELECT COUNT(*) FROM card_progress cp
+                   JOIN mcqs m ON m.id = cp.mcq_id
+                   WHERE cp.next_review_date <= ? AND cp.repetitions > 0 {vf}""",
                 (today,),
             ).fetchone()[0]
             new = conn.execute(
-                """SELECT COUNT(*) FROM mcqs m
+                f"""SELECT COUNT(*) FROM mcqs m
                    LEFT JOIN card_progress cp ON cp.mcq_id = m.id
-                   WHERE cp.mcq_id IS NULL
-                         OR (cp.repetitions = 0 AND cp.next_review_date <= ?)""",
+                   WHERE cp.mcq_id IS NULL {vf}""",
+            ).fetchone()[0]
+            review_pool = conn.execute(
+                f"""SELECT COUNT(*) FROM card_progress cp
+                   JOIN mcqs m ON m.id = cp.mcq_id
+                   WHERE cp.repetitions = 0 AND cp.last_reviewed_at IS NOT NULL
+                   AND cp.next_review_date <= ? {vf}""",
                 (today,),
             ).fetchone()[0]
             reviewed_today = conn.execute(
-                "SELECT COUNT(*) FROM review_logs WHERE date(reviewed_at)=date(?)", (today,)
+                "SELECT COUNT(DISTINCT mcq_id) FROM review_logs WHERE date(reviewed_at)=date(?)", (today,)
             ).fetchone()[0]
-        return {"total": total, "due": due, "new": new, "reviewed_today": reviewed_today}
+
+            # Retention: % correct in last 7 days
+            row7 = conn.execute(
+                """SELECT COUNT(*), SUM(was_correct) FROM review_logs
+                   WHERE reviewed_at >= datetime(?, '-7 days')""",
+                (today,),
+            ).fetchone()
+            total_7d, correct_7d = row7[0] or 0, row7[1] or 0
+            retention_7d = round(correct_7d / total_7d * 100) if total_7d else None
+
+            # Mastered: interval >= 21 days
+            mastered = conn.execute(
+                "SELECT COUNT(*) FROM card_progress WHERE interval_days >= 21"
+            ).fetchone()[0]
+
+            # Streak: consecutive days with at least one review
+            dates = [
+                r[0] for r in conn.execute(
+                    "SELECT DISTINCT date(reviewed_at) FROM review_logs ORDER BY 1 DESC"
+                ).fetchall()
+            ]
+            streak = 0
+            from datetime import date as _date, timedelta
+            check = _date.today()
+            for d in dates:
+                if d == str(check):
+                    streak += 1
+                    check -= timedelta(days=1)
+                elif d == str(check - timedelta(days=1)):
+                    # allow today not yet studied — count yesterday as start
+                    check = _date.fromisoformat(d)
+                    streak += 1
+                    check -= timedelta(days=1)
+                else:
+                    break
+
+        return {
+            "total": total, "due": due, "new": new,
+            "review_pool": review_pool,
+            "reviewed_today": reviewed_today,
+            "retention_7d": retention_7d,
+            "mastered": mastered,
+            "streak": streak,
+        }
 
     def get_next_due_info(self) -> Optional[dict]:
         now = datetime.now().isoformat()
+        vf = self._VISIBLE_FILTER
         with self._conn() as conn:
             row = conn.execute(
-                """SELECT MIN(next_review_date) as next_review_date, COUNT(*) as count
-                   FROM card_progress
-                   WHERE next_review_date > ?
-                   GROUP BY strftime('%Y-%m-%dT%H', next_review_date)
-                   ORDER BY MIN(next_review_date) ASC
+                f"""SELECT MIN(cp.next_review_date) as next_review_date, COUNT(*) as count
+                   FROM card_progress cp
+                   JOIN mcqs m ON m.id = cp.mcq_id
+                   WHERE cp.next_review_date > ? {vf}
+                   GROUP BY strftime('%Y-%m-%dT%H', cp.next_review_date)
+                   ORDER BY MIN(cp.next_review_date) ASC
                    LIMIT 1""",
                 (now,),
             ).fetchone()
@@ -635,6 +825,8 @@ class CachedRepository(AbstractRepository):
     """
 
     def __init__(self, supabase_url: str, supabase_key: str, db_path: str = "mcqs.db"):
+        self._url = supabase_url
+        self._key = supabase_key
         self._sb = _SupabaseClient(supabase_url, supabase_key)
         self._db_path = db_path
         self._local = SQLiteRepository(db_path)
@@ -645,24 +837,56 @@ class CachedRepository(AbstractRepository):
             self.last_sync_error = str(exc)
 
     def clear_local_cache_and_sync(self) -> None:
-        """Delete the local SQLite file and re-sync from Supabase.
+        """Wipe all local tables and re-sync from Supabase.
 
         Call this from a 'Force Sync' button in the UI to recover from a
         stale local cache without needing to go into Android Settings.
         """
-        import os
-        # Close existing connection so the file can be deleted
-        if self._local._connection is not None:
-            self._local._connection.close()
-            self._local._connection = None
-        try:
-            os.remove(self._db_path)
-        except FileNotFoundError:
-            pass
-        # Re-initialise the local DB (creates a fresh empty schema)
-        self._local = SQLiteRepository(self._db_path)
         self.last_sync_error = None
         self._sync_from_supabase(force=True)
+
+    def _sync_hidden_from_supabase(self) -> None:
+        """Pull hidden_subjects + hidden_topics from Supabase into local SQLite.
+
+        Best-effort — silently skips if the tables don't exist yet.
+        """
+        try:
+            hidden_subjs = self._sb.table("hidden_subjects").select("*").execute().data
+            hidden_tops  = self._sb.table("hidden_topics").select("*").execute().data
+            with self._local._conn() as conn:
+                conn.execute("DELETE FROM hidden_subjects")
+                conn.execute("DELETE FROM hidden_topics")
+                for hs in hidden_subjs:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO hidden_subjects (subject) VALUES (?)",
+                        (hs["subject"],),
+                    )
+                for ht in hidden_tops:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO hidden_topics (subject, topic) VALUES (?,?)",
+                        (ht["subject"], ht["topic"]),
+                    )
+        except Exception:
+            pass
+
+    def start_hidden_sync_poll(self, on_hidden_change, interval: int = 30) -> None:
+        """Poll Supabase every `interval` seconds for hidden state changes.
+
+        Runs in a daemon thread so it stops automatically when the process exits.
+        Uses a simple REST call — no WebSocket connections needed.
+        """
+        import time
+
+        def _poll():
+            while True:
+                time.sleep(interval)
+                try:
+                    self._sync_hidden_from_supabase()
+                    on_hidden_change()
+                except Exception:
+                    pass
+
+        threading.Thread(target=_poll, daemon=True).start()
 
     # ── Sync ─────────────────────────────────────────────────────────────
 
@@ -740,6 +964,7 @@ class CachedRepository(AbstractRepository):
                         if len(sb_nrd) == 10 and len(local_nrd) > 10
                         else sb_nrd
                     )
+                    final_nrd = _snap_midnight(final_nrd)
                     conn.execute(
                         """INSERT INTO card_progress
                            (id, mcq_id, ease_factor, interval_days, repetitions,
@@ -774,6 +999,8 @@ class CachedRepository(AbstractRepository):
                     (lg["id"], lg["mcq_id"], lg["quality"], int(lg["was_correct"]),
                      _norm_dt(lg.get("reviewed_at"))),
                 )
+
+        self._sync_hidden_from_supabase()
 
     def _migrate_local_to_supabase(self) -> None:
         """Push existing local SQLite data up to Supabase (first-time migration)."""
@@ -830,11 +1057,14 @@ class CachedRepository(AbstractRepository):
     def count_mcqs(self, subject: str = "", topic: str = "", search: str = "") -> int:
         return self._local.count_mcqs(subject, topic, search)
 
-    def get_due_mcqs(self, limit: int = 20, subject: str = "", topic: str = "") -> list[MCQ]:
+    def get_due_mcqs(self, limit: Optional[int] = None, subject: str = "", topic: str = "") -> list[MCQ]:
         return self._local.get_due_mcqs(limit, subject, topic)
 
-    def get_new_mcqs(self, limit: int = 20, subject: str = "", topic: str = "") -> list[MCQ]:
+    def get_new_mcqs(self, limit: Optional[int] = None, subject: str = "", topic: str = "") -> list[MCQ]:
         return self._local.get_new_mcqs(limit, subject, topic)
+
+    def get_review_pool_mcqs(self, limit: Optional[int] = None, subject: str = "", topic: str = "") -> list[MCQ]:
+        return self._local.get_review_pool_mcqs(limit, subject, topic)
 
     def get_subject_stats(self) -> list[dict]:
         return self._local.get_subject_stats()
@@ -859,6 +1089,30 @@ class CachedRepository(AbstractRepository):
 
     def list_topics(self, subject: str = "") -> list[str]:
         return self._local.list_topics(subject)
+
+    def get_hidden_subjects(self) -> set:
+        return self._local.get_hidden_subjects()
+
+    def get_hidden_topics(self) -> set:
+        return self._local.get_hidden_topics()
+
+    def set_subject_hidden(self, subject: str, hidden: bool) -> None:
+        self._local.set_subject_hidden(subject, hidden)
+        try:
+            self._sb.table("hidden_subjects").delete().eq("subject", subject).execute()
+            if hidden:
+                self._sb.table("hidden_subjects").insert({"subject": subject}).execute()
+        except Exception:
+            pass
+
+    def set_topic_hidden(self, subject: str, topic: str, hidden: bool) -> None:
+        self._local.set_topic_hidden(subject, topic, hidden)
+        try:
+            self._sb.table("hidden_topics").delete().eq("subject", subject).eq("topic", topic).execute()
+            if hidden:
+                self._sb.table("hidden_topics").insert({"subject": subject, "topic": topic}).execute()
+        except Exception:
+            pass
 
     # ── Writes → Supabase first, then mirror to local ─────────────────────
 
@@ -943,6 +1197,7 @@ class CachedRepository(AbstractRepository):
                         if len(sb_nrd) == 10 and len(local_nrd) > 10
                         else sb_nrd
                     )
+                    final_nrd = _snap_midnight(final_nrd)
                     conn.execute(
                         """INSERT OR REPLACE INTO card_progress
                            (id, mcq_id, ease_factor, interval_days, repetitions,
@@ -986,6 +1241,41 @@ class CachedRepository(AbstractRepository):
 
         threading.Thread(target=_sync, daemon=False).start()
         return progress
+
+    def delete_subject(self, subject: str) -> None:
+        # Collect IDs before local delete so we can clean up Supabase relations.
+        with self._local._conn() as conn:
+            ids = [r[0] for r in conn.execute(
+                "SELECT id FROM mcqs WHERE subject=?", (subject,)
+            ).fetchall()]
+        self._local.delete_subject(subject)
+        if ids:
+            def _sync():
+                try:
+                    self._sb.table("review_logs").delete().in_("mcq_id", ids).execute()
+                    self._sb.table("card_progress").delete().in_("mcq_id", ids).execute()
+                    self._sb.table("mcqs").delete().eq("subject", subject).execute()
+                except Exception:
+                    pass
+            import threading
+            threading.Thread(target=_sync, daemon=False).start()
+
+    def delete_topic(self, subject: str, topic: str) -> None:
+        with self._local._conn() as conn:
+            ids = [r[0] for r in conn.execute(
+                "SELECT id FROM mcqs WHERE subject=? AND topic=?", (subject, topic)
+            ).fetchall()]
+        self._local.delete_topic(subject, topic)
+        if ids:
+            def _sync():
+                try:
+                    self._sb.table("review_logs").delete().in_("mcq_id", ids).execute()
+                    self._sb.table("card_progress").delete().in_("mcq_id", ids).execute()
+                    self._sb.table("mcqs").delete().eq("subject", subject).eq("topic", topic).execute()
+                except Exception:
+                    pass
+            import threading
+            threading.Thread(target=_sync, daemon=False).start()
 
     def reset_schedule(self) -> None:
         self._local.reset_schedule()
