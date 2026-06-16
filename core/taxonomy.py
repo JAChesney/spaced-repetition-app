@@ -18,6 +18,7 @@ TAXONOMY: dict[str, dict[str, list[str]]] = {
             "Marathas",
         ],
         "Modern India": [
+            "Rise of Regional Kingdoms",
             "British Rule",
             "Revolt of 1857",
             "Freedom Movement",
