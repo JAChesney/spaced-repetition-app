@@ -30,6 +30,7 @@ class CardProgress:
     next_review_date: datetime = field(default_factory=datetime.now)
     last_reviewed_at: Optional[datetime] = None
     again_count: int = 0   # cumulative Again presses; drives the requeue cycle
+    review_tag: str = ""   # "", "echo" (wrong once, corrected) or "drill" (wrong twice)
     id: Optional[int] = None
 
 

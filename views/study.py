@@ -124,6 +124,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate,
         slots = max(0, session_size - len(due))
         new   = repo.get_new_mcqs(limit=slots, subject=subject, topic=topic) if slots > 0 else []
         queue = due + new
+        random.shuffle(queue)
 
     if not queue:
         return _empty_state(navigate, subject, topic, is_review_session)
@@ -182,6 +183,10 @@ def build(page: ft.Page, repo: AbstractRepository, navigate,
         state["answered"]  = False
         state["selected"]  = None
         show_exp_state["visible"] = False
+
+        card_progress = repo.get_progress(mcq.id)
+        is_drill = is_review_session and bool(card_progress) and card_progress.review_tag == "drill"
+        _build_rating_section(is_drill)
 
         n     = state["index"]
         total = len(queue)
@@ -250,24 +255,31 @@ def build(page: ft.Page, repo: AbstractRepository, navigate,
 
         mcq         = current_mcq()
         was_correct = state["selected"] == state["shuffled_correct"]
+        is_retry    = mcq.id in requeued_ids
 
-        if is_review_session:
-            # Every button in review session → Hard (1 day); no exceptions, no re-queue
-            effective_quality = 1
-        elif mcq.id in requeued_ids:
-            # Card was wrong and already re-queued once; any button now → review pool
-            effective_quality = 0
-        else:
-            effective_quality = quality
+        progress  = repo.get_progress(mcq.id) or CardProgress(mcq_id=mcq.id)
+        was_drill = is_review_session and progress.review_tag == "drill"
 
-        progress = repo.get_progress(mcq.id) or CardProgress(mcq_id=mcq.id)
-        updated  = sm2_review(progress, effective_quality)
+        # Drill cards always use the single forced button (Hard/1-day); everything
+        # else — normal cards, retries, and resurfaced echo cards — uses the real rating.
+        effective_quality = 1 if was_drill else quality
+
+        updated = sm2_review(progress, effective_quality)
         updated.last_reviewed_at = datetime.now()
+
+        if was_drill:
+            updated.review_tag = ""   # one pass through the review session clears drill
+        elif is_retry:
+            # Retry resolved: corrected → echo (real rating sticks); wrong again → drill
+            updated.review_tag = "echo" if effective_quality != 0 else "drill"
+        # else: leave review_tag as loaded — untagged cards stay untagged until a
+        # retry resolves; resurfaced echo cards keep their tag while cycling
+
         repo.save_progress(updated)
         repo.add_review_log(ReviewLog(mcq_id=mcq.id, quality=quality, was_correct=was_correct))
 
-        # Normal session: re-queue a first-time wrong card once for an immediate retry
-        if not is_review_session and quality == 0 and mcq.id not in requeued_ids:
+        # A fresh wrong rating gets one immediate re-attempt, in any session
+        if effective_quality == 0 and not is_retry:
             requeued_ids.add(mcq.id)
             queue.append(mcq)
 
@@ -293,58 +305,62 @@ def build(page: ft.Page, repo: AbstractRepository, navigate,
     explanation_box.padding     = 12
 
     # ── Rating buttons ────────────────────────────────────────────────────
-    if is_review_session:
-        # All buttons do the same thing (Hard, 1 day) — show one button to avoid confusion
-        rating_section.content = ft.Column(
-            [
-                ft.Row(
-                    [
-                        ft.Text("Review session — card comes back tomorrow regardless",
-                                color=T.TEXT2, size=12, expand=True),
-                        explanation_toggle,
-                    ],
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                ft.Row(
-                    [
-                        ft.Container(
-                            content=ft.Text("Next  •  Back Tomorrow", color="white",
-                                            weight=ft.FontWeight.BOLD, size=14,
-                                            text_align=ft.TextAlign.CENTER),
-                            bgcolor=T.WARN, border_radius=12,
-                            padding=ft.Padding.symmetric(vertical=14),
-                            expand=True, alignment=ft.Alignment.CENTER,
-                            on_click=lambda _: record_and_advance(1),
-                        )
-                    ],
-                    spacing=8,
-                ),
-            ],
-            spacing=10,
-        )
-    else:
-        rating_section.content = ft.Column(
-            [
-                ft.Row(
-                    [
-                        ft.Text("Rate your recall difficulty",
-                                color=T.TEXT2, size=12, expand=True),
-                        explanation_toggle,
-                    ],
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                ft.Row(
-                    [
-                        _rating_btn("Again",          T.ERROR,   lambda _: record_and_advance(0)),
-                        _rating_btn("Hard\n(1 day)",  T.WARN,    lambda _: record_and_advance(1)),
-                        _rating_btn("Good\n(2 days)", T.SUCCESS, lambda _: record_and_advance(2)),
-                        _rating_btn("Easy\n(3 days)", T.TEAL,    lambda _: record_and_advance(3)),
-                    ],
-                    spacing=8,
-                ),
-            ],
-            spacing=10,
-        )
+    def _build_rating_section(is_drill: bool):
+        if is_drill:
+            # Drill cards (wrong twice, never corrected) get one forced button —
+            # answering it, right or wrong, always clears the tag.
+            rating_section.content = ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text("Drill card — comes back tomorrow, then rejoins normal review",
+                                    color=T.TEXT2, size=12, expand=True),
+                            explanation_toggle,
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Row(
+                        [
+                            ft.Container(
+                                content=ft.Text("Next  •  Back Tomorrow", color="white",
+                                                weight=ft.FontWeight.BOLD, size=14,
+                                                text_align=ft.TextAlign.CENTER),
+                                bgcolor=T.WARN, border_radius=12,
+                                padding=ft.Padding.symmetric(vertical=14),
+                                expand=True, alignment=ft.Alignment.CENTER,
+                                on_click=lambda _: record_and_advance(1),
+                            )
+                        ],
+                        spacing=8,
+                    ),
+                ],
+                spacing=10,
+            )
+        else:
+            # Normal cards, in-session retries, and resurfaced echo cards all get
+            # the real rating buttons.
+            rating_section.content = ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text("Rate your recall difficulty",
+                                    color=T.TEXT2, size=12, expand=True),
+                            explanation_toggle,
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Row(
+                        [
+                            _rating_btn("Again",          T.ERROR,   lambda _: record_and_advance(0)),
+                            _rating_btn("Hard\n(1 day)",  T.WARN,    lambda _: record_and_advance(1)),
+                            _rating_btn("Good\n(2 days)", T.SUCCESS, lambda _: record_and_advance(2)),
+                            _rating_btn("Easy\n(3 days)", T.TEAL,    lambda _: record_and_advance(3)),
+                        ],
+                        spacing=8,
+                    ),
+                ],
+                spacing=10,
+            )
 
     load_card()
 
@@ -353,7 +369,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate,
         content=ft.Row(
             [
                 ft.Icon(ft.Icons.REPLAY_ROUNDED, color=T.WARN, size=16),
-                ft.Text("REVIEW SESSION — cards come back tomorrow",
+                ft.Text("REVIEW SESSION — drill cards reset tomorrow, others follow your rating",
                         color=T.WARN, size=12, weight=ft.FontWeight.W_600,
                         expand=True),
             ],
@@ -405,7 +421,7 @@ def _empty_state(navigate, subject: str, topic: str,
     if is_review_session:
         icon  = ft.Icons.REVIEWS_OUTLINED
         title = "No review cards yet"
-        body  = "Wrong answers pool here after all normal sessions are done."
+        body  = "Cards you got wrong once (echo) or twice in a row (drill) show up here once due."
     else:
         label = " › ".join(filter(None, [subject, topic])) or "all cards"
         icon  = ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED

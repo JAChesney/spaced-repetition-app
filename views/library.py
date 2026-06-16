@@ -106,8 +106,9 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                                                     size=13,
                                                     weight=ft.FontWeight.W_500),
                                             ft.Text(
-                                                f"{t['total']} Cards\nMastered: {t['mastery_pct']}%",
-                                                color=T.BORDER if iht else T.TEXT2,
+                                                f"{t['total']} Cards • {t['due']} Due\nMastered: {t['mastery_pct']}%",
+                                                color=T.BORDER if iht
+                                                      else (T.WARN if t['due'] > 0 else T.TEXT2),
                                                 size=11,
                                             ),
                                         ],
@@ -124,6 +125,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                                         content=ft.Icon(ft.Icons.CHEVRON_RIGHT,
                                                         color=T.TEXT2 if not iht else T.BORDER,
                                                         size=18),
+                                        tooltip="Study this topic" if not iht else None,
                                         on_click=(lambda _, s=s, tp=tp:
                                                   navigate("study", data={"subject": s, "topic": tp}))
                                         if not iht else None,
@@ -176,8 +178,10 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                                     ft.Text(s, color=T.TEXT2 if ihs else T.TEXT,
                                             size=16, weight=ft.FontWeight.BOLD),
                                     ft.Text(
-                                        f"{info['topics']} Topics\n{info['total']} Cards",
-                                        color=T.BORDER if ihs else T.TEXT2,
+                                        f"{info['topics']} Topics • {info['total']} Cards\n"
+                                        f"{info['due']} Due",
+                                        color=T.BORDER if ihs
+                                              else (T.WARN if info['due'] > 0 else T.TEXT2),
                                         size=12,
                                     ),
                                 ],

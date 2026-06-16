@@ -53,19 +53,46 @@ class _Table:
 
     def execute(self):
         import httpx
+        _PAGE = 1000
         with httpx.Client(headers=self._headers, timeout=30.0) as http:
             if self._method == "GET":
-                resp = http.get(self._url, params=self._params)
+                # Paginate through all rows — PostgREST caps at max_rows (default 1000)
+                # without pagination, so requests beyond that are silently truncated.
+                all_data = []
+                offset = 0
+                while True:
+                    resp = http.get(
+                        self._url, params=self._params,
+                        headers={"Range": f"{offset}-{offset + _PAGE - 1}",
+                                 "Range-Unit": "items"},
+                    )
+                    resp.raise_for_status()
+                    page = resp.json() if resp.content else []
+                    if isinstance(page, dict):
+                        page = [page]
+                    all_data.extend(page)
+                    if len(page) < _PAGE:
+                        break
+                    offset += _PAGE
+                data = all_data
             elif self._method == "POST":
                 resp = http.post(self._url, json=self._body, params=self._params)
+                resp.raise_for_status()
+                data = resp.json() if resp.content else []
+                if isinstance(data, dict):
+                    data = [data]
             elif self._method == "PATCH":
                 resp = http.patch(self._url, json=self._body, params=self._params)
+                resp.raise_for_status()
+                data = resp.json() if resp.content else []
+                if isinstance(data, dict):
+                    data = [data]
             else:
                 resp = http.delete(self._url, params=self._params)
-        resp.raise_for_status()
-        data = resp.json() if resp.content else []
-        if isinstance(data, dict):
-            data = [data]
+                resp.raise_for_status()
+                data = resp.json() if resp.content else []
+                if isinstance(data, dict):
+                    data = [data]
 
         class _Result:
             pass
@@ -292,6 +319,7 @@ class SQLiteRepository(AbstractRepository):
         existing_cp = {row[1] for row in conn.execute("PRAGMA table_info(card_progress)").fetchall()}
         cp_migrations = [
             ("again_count", "ALTER TABLE card_progress ADD COLUMN again_count INTEGER NOT NULL DEFAULT 0"),
+            ("review_tag",  "ALTER TABLE card_progress ADD COLUMN review_tag TEXT NOT NULL DEFAULT ''"),
         ]
         for col, sql in cp_migrations:
             if col not in existing_cp:
@@ -397,6 +425,7 @@ class SQLiteRepository(AbstractRepository):
         sql = f"""SELECT m.* FROM mcqs m
                  JOIN card_progress cp ON cp.mcq_id = m.id
                  WHERE cp.next_review_date <= ? AND cp.repetitions > 0
+                   AND (cp.review_tag = '' OR cp.review_tag IS NULL)
                  {self._VISIBLE_FILTER}"""
         params: list = [today]
         if subject:
@@ -405,7 +434,7 @@ class SQLiteRepository(AbstractRepository):
         if topic:
             sql += " AND m.topic=?"
             params.append(topic)
-        sql += " ORDER BY cp.next_review_date ASC"
+        sql += " ORDER BY RANDOM()"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
@@ -428,7 +457,7 @@ class SQLiteRepository(AbstractRepository):
         if topic:
             sql += " AND m.topic=?"
             params.append(topic)
-        sql += " ORDER BY m.created_at ASC"
+        sql += " ORDER BY RANDOM()"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
@@ -437,12 +466,11 @@ class SQLiteRepository(AbstractRepository):
         return [self._row_to_mcq(r) for r in rows]
 
     def get_review_pool_mcqs(self, limit: Optional[int] = None, subject: str = "", topic: str = "") -> list[MCQ]:
-        """Cards answered wrong in a previous session, now due for a review round."""
+        """Cards tagged 'echo' (wrong once, corrected) or 'drill' (wrong twice), now due."""
         now = datetime.now().isoformat()
         sql = f"""SELECT m.* FROM mcqs m
                  JOIN card_progress cp ON cp.mcq_id = m.id
-                 WHERE cp.repetitions = 0
-                   AND cp.last_reviewed_at IS NOT NULL
+                 WHERE cp.review_tag IN ('echo', 'drill')
                    AND cp.next_review_date <= ?
                  {self._VISIBLE_FILTER}"""
         params: list = [now]
@@ -452,7 +480,7 @@ class SQLiteRepository(AbstractRepository):
         if topic:
             sql += " AND m.topic=?"
             params.append(topic)
-        sql += " ORDER BY cp.next_review_date ASC"
+        sql += " ORDER BY RANDOM()"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
@@ -581,24 +609,25 @@ class SQLiteRepository(AbstractRepository):
             if existing:
                 conn.execute(
                     """UPDATE card_progress SET ease_factor=?, interval_days=?,
-                       repetitions=?, next_review_date=?, last_reviewed_at=?, again_count=?
+                       repetitions=?, next_review_date=?, last_reviewed_at=?, again_count=?,
+                       review_tag=?
                        WHERE mcq_id=?""",
                     (progress.ease_factor, progress.interval_days, progress.repetitions,
                      progress.next_review_date.isoformat(),
                      progress.last_reviewed_at.isoformat() if progress.last_reviewed_at else None,
-                     progress.again_count, progress.mcq_id),
+                     progress.again_count, progress.review_tag, progress.mcq_id),
                 )
                 progress.id = existing["id"]
             else:
                 cur = conn.execute(
                     """INSERT INTO card_progress
                        (mcq_id, ease_factor, interval_days, repetitions, next_review_date,
-                        last_reviewed_at, again_count)
-                       VALUES (?,?,?,?,?,?,?)""",
+                        last_reviewed_at, again_count, review_tag)
+                       VALUES (?,?,?,?,?,?,?,?)""",
                     (progress.mcq_id, progress.ease_factor, progress.interval_days,
                      progress.repetitions, progress.next_review_date.isoformat(),
                      progress.last_reviewed_at.isoformat() if progress.last_reviewed_at else None,
-                     progress.again_count),
+                     progress.again_count, progress.review_tag),
                 )
                 progress.id = cur.lastrowid
         return progress
@@ -813,6 +842,7 @@ class SQLiteRepository(AbstractRepository):
             last_reviewed_at=datetime.fromisoformat(row["last_reviewed_at"])
             if row["last_reviewed_at"] else None,
             again_count=row["again_count"] if "again_count" in keys else 0,
+            review_tag=row["review_tag"] if "review_tag" in keys else "",
         )
 
 
@@ -836,14 +866,13 @@ class CachedRepository(AbstractRepository):
         except Exception as exc:
             self.last_sync_error = str(exc)
 
-    def clear_local_cache_and_sync(self) -> None:
+    def clear_local_cache_and_sync(self) -> dict:
         """Wipe all local tables and re-sync from Supabase.
 
-        Call this from a 'Force Sync' button in the UI to recover from a
-        stale local cache without needing to go into Android Settings.
+        Returns {"fetched": int, "inserted": int, "skipped": int}.
         """
         self.last_sync_error = None
-        self._sync_from_supabase(force=True)
+        return self._sync_from_supabase(force=True)
 
     def _sync_hidden_from_supabase(self) -> None:
         """Pull hidden_subjects + hidden_topics from Supabase into local SQLite.
@@ -890,15 +919,18 @@ class CachedRepository(AbstractRepository):
 
     # ── Sync ─────────────────────────────────────────────────────────────
 
-    def _sync_from_supabase(self, force: bool = False) -> None:
+    def _sync_from_supabase(self, force: bool = False) -> dict:
+        """Returns {"fetched": int, "inserted": int, "skipped": int}."""
         mcqs = self._sb.table("mcqs").select("*").execute().data
         progress = self._sb.table("card_progress").select("*").execute().data
         logs = self._sb.table("review_logs").select("*").execute().data
 
+        fetched = len(mcqs)
+
         # If Supabase is empty but local has data, push local up instead of wiping it
         if not mcqs and self._local.count_mcqs() > 0:
             self._migrate_local_to_supabase()
-            return
+            return {"fetched": 0, "inserted": 0, "skipped": 0}
 
         # Snapshot local card_progress before wiping so we can prefer it when
         # it is more recent than Supabase (handles daemon-thread sync not
@@ -909,25 +941,39 @@ class CachedRepository(AbstractRepository):
                 for row in snap.execute("SELECT * FROM card_progress").fetchall():
                     local_cp[row["mcq_id"]] = {k: row[k] for k in row.keys()}
 
+        inserted = 0
+        skipped = 0
         with self._local._conn() as conn:
             # Delete in child-first order to satisfy foreign key constraints
             conn.execute("DELETE FROM review_logs")
             conn.execute("DELETE FROM card_progress")
             conn.execute("DELETE FROM mcqs")
             for m in mcqs:
-                conn.execute(
-                    """INSERT INTO mcqs (id, question, option_a, option_b, option_c, option_d,
-                       correct_answer, subject, topic, subtopic, explanation,
-                       question_type, event_date, created_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (m["id"], m["question"], m["option_a"], m["option_b"], m["option_c"],
-                     m["option_d"], m["correct_answer"], m.get("subject") or "",
-                     m.get("topic") or "", m.get("subtopic") or "",
-                     m.get("explanation") or "",
-                     m.get("question_type") or "STATIC",
-                     m.get("event_date"),
-                     _norm_dt(m.get("created_at"))),
-                )
+                try:
+                    ans = (m.get("correct_answer") or "").strip().upper()
+                    if ans not in ("A", "B", "C", "D"):
+                        skipped += 1
+                        continue
+                    q_type = (m.get("question_type") or "STATIC").strip().upper()
+                    if q_type not in ("STATIC", "CURRENT_AFFAIRS", "BIHAR_GK"):
+                        q_type = "STATIC"
+                    conn.execute(
+                        """INSERT INTO mcqs (id, question, option_a, option_b, option_c, option_d,
+                           correct_answer, subject, topic, subtopic, explanation,
+                           question_type, event_date, created_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (m["id"],
+                         m.get("question") or "", m.get("option_a") or "",
+                         m.get("option_b") or "", m.get("option_c") or "",
+                         m.get("option_d") or "", ans,
+                         m.get("subject") or "", m.get("topic") or "",
+                         m.get("subtopic") or "", m.get("explanation") or "",
+                         q_type, m.get("event_date"),
+                         _norm_dt(m.get("created_at"))),
+                    )
+                    inserted += 1
+                except Exception:
+                    skipped += 1
             supabase_mcq_ids   = {m["id"] for m in mcqs}
             supabase_cp_ids    = {p["mcq_id"] for p in progress}
 
@@ -948,13 +994,13 @@ class CachedRepository(AbstractRepository):
                     conn.execute(
                         """INSERT INTO card_progress
                            (id, mcq_id, ease_factor, interval_days, repetitions,
-                            next_review_date, last_reviewed_at, again_count)
-                           VALUES (?,?,?,?,?,?,?,?)""",
+                            next_review_date, last_reviewed_at, again_count, review_tag)
+                           VALUES (?,?,?,?,?,?,?,?,?)""",
                         (p["id"], p["mcq_id"],
                          local["ease_factor"], local["interval_days"],
                          local["repetitions"], local["next_review_date"],
                          local["last_reviewed_at"],
-                         local.get("again_count", 0)),
+                         local.get("again_count", 0), local.get("review_tag", "")),
                     )
                 else:
                     sb_nrd    = _norm_dt(p.get("next_review_date")) or ""
@@ -968,11 +1014,12 @@ class CachedRepository(AbstractRepository):
                     conn.execute(
                         """INSERT INTO card_progress
                            (id, mcq_id, ease_factor, interval_days, repetitions,
-                            next_review_date, last_reviewed_at, again_count)
-                           VALUES (?,?,?,?,?,?,?,?)""",
+                            next_review_date, last_reviewed_at, again_count, review_tag)
+                           VALUES (?,?,?,?,?,?,?,?,?)""",
                         (p["id"], p["mcq_id"], p["ease_factor"], p["interval_days"],
                          p["repetitions"], final_nrd,
-                         _norm_dt(p.get("last_reviewed_at")), p.get("again_count", 0)),
+                         _norm_dt(p.get("last_reviewed_at")), p.get("again_count", 0),
+                         p.get("review_tag", "")),
                     )
 
             # Re-insert local rows for cards that exist in Supabase MCQs but
@@ -985,11 +1032,12 @@ class CachedRepository(AbstractRepository):
                     conn.execute(
                         """INSERT OR IGNORE INTO card_progress
                            (mcq_id, ease_factor, interval_days, repetitions,
-                            next_review_date, last_reviewed_at, again_count)
-                           VALUES (?,?,?,?,?,?,?)""",
+                            next_review_date, last_reviewed_at, again_count, review_tag)
+                           VALUES (?,?,?,?,?,?,?,?)""",
                         (mcq_id, local["ease_factor"], local["interval_days"],
                          local["repetitions"], local["next_review_date"],
-                         local["last_reviewed_at"], local.get("again_count", 0)),
+                         local["last_reviewed_at"], local.get("again_count", 0),
+                         local.get("review_tag", "")),
                     )
 
             for lg in logs:
@@ -1001,6 +1049,7 @@ class CachedRepository(AbstractRepository):
                 )
 
         self._sync_hidden_from_supabase()
+        return {"fetched": fetched, "inserted": inserted, "skipped": skipped}
 
     def _migrate_local_to_supabase(self) -> None:
         """Push existing local SQLite data up to Supabase (first-time migration)."""
@@ -1201,11 +1250,12 @@ class CachedRepository(AbstractRepository):
                     conn.execute(
                         """INSERT OR REPLACE INTO card_progress
                            (id, mcq_id, ease_factor, interval_days, repetitions,
-                            next_review_date, last_reviewed_at, again_count)
-                           VALUES (?,?,?,?,?,?,?,?)""",
+                            next_review_date, last_reviewed_at, again_count, review_tag)
+                           VALUES (?,?,?,?,?,?,?,?,?)""",
                         (p["id"], p["mcq_id"], p["ease_factor"], p["interval_days"],
                          p["repetitions"], final_nrd,
-                         _norm_dt(p.get("last_reviewed_at")), p.get("again_count", 0)),
+                         _norm_dt(p.get("last_reviewed_at")), p.get("again_count", 0),
+                         p.get("review_tag", "")),
                     )
 
     def save_progress(self, progress: CardProgress) -> CardProgress:
@@ -1223,6 +1273,7 @@ class CachedRepository(AbstractRepository):
                 progress.last_reviewed_at.isoformat() if progress.last_reviewed_at else None
             ),
             "again_count": progress.again_count,
+            "review_tag": progress.review_tag,
         }
         mcq_id = progress.mcq_id
 

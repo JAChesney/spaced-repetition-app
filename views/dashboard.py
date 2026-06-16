@@ -463,7 +463,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
                               on_click=lambda _: _close_dlg(),
                               style=ft.ButtonStyle(color=T.TEXT2)),
                 ft.TextButton("Sync Now",
-                              on_click=lambda _: _do_sync(),
+                              on_click=lambda _: page.run_task(_do_sync),
                               style=ft.ButtonStyle(color=T.ACCENT)),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
@@ -474,18 +474,30 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
             dlg.open = False
             page.update()
 
-        def _do_sync():
+        async def _do_sync():
+            import asyncio
             sync_status.value = "Syncing…"
             sync_status.color = T.TEXT2
             page.update()
             try:
-                repo.clear_local_cache_and_sync()
-                sync_status.value = f"✓ Done — {repo.count_mcqs()} cards loaded from Supabase."
-                sync_status.color = T.ACCENT
+                result = await asyncio.get_event_loop().run_in_executor(None, repo.clear_local_cache_and_sync)
+                fetched  = result.get("fetched", 0)
+                inserted = result.get("inserted", 0)
+                skipped  = result.get("skipped", 0)
+                if skipped:
+                    sync_status.value = (
+                        f"Done — {inserted} inserted, {skipped} skipped "
+                        f"(Supabase returned {fetched}). Tap OK to refresh."
+                    )
+                    sync_status.color = T.TEXT2
+                    page.update()
+                    await asyncio.sleep(3)
+                dlg.open = False
+                navigate("dashboard")
             except Exception as e:
                 sync_status.value = f"✗ Sync failed: {e}"
                 sync_status.color = ft.Colors.ERROR
-            page.update()
+                page.update()
 
         page.overlay.append(dlg)
         dlg.open = True
