@@ -18,6 +18,7 @@ class MCQ:
     question_type: str = "STATIC"   # "STATIC", "CURRENT_AFFAIRS", or "BIHAR_GK"
     event_date: Optional[date] = None  # for CURRENT_AFFAIRS only
     id: Optional[int] = None
+    public_id: str = ""          # short alphanumeric code, assigned on creation
     created_at: Optional[datetime] = None
 
 

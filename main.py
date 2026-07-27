@@ -38,8 +38,9 @@ def main(page: ft.Page):
     page.window.min_width = 360
     page.window.min_height = 640
 
-    # Set custom app icon (Flet on Windows requires .ico format)
-    _icon_path = os.path.join(os.path.dirname(__file__), "assets", "icon.ico")
+    import sys
+    _assets = os.path.join(os.path.dirname(__file__), "assets")
+    _icon_path = os.path.join(_assets, "icon.ico" if sys.platform == "win32" else "icon.png")
     if os.path.exists(_icon_path):
         page.window.icon = _icon_path
 

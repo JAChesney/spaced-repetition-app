@@ -2,12 +2,20 @@
 Repository layer. Swap SQLiteRepository for a Supabase/S3 implementation
 by implementing the same AbstractRepository interface.
 """
+import secrets
 import sqlite3
 import threading
 from abc import ABC, abstractmethod
 from datetime import datetime, date
 from typing import Optional
 from .models import MCQ, CardProgress, ReviewLog
+
+# Unambiguous alphanumeric charset — no 0/O or 1/I — for human-typed public IDs.
+_PUBLIC_ID_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+
+
+def _generate_public_id(length: int = 8) -> str:
+    return "".join(secrets.choice(_PUBLIC_ID_ALPHABET) for _ in range(length))
 
 
 # ── Minimal Supabase REST client ──────────────────────────────────────────────
@@ -159,6 +167,9 @@ class AbstractRepository(ABC):
     def get_mcq(self, mcq_id: int) -> Optional[MCQ]: ...
 
     @abstractmethod
+    def get_mcq_by_public_id(self, public_id: str) -> Optional[MCQ]: ...
+
+    @abstractmethod
     def list_mcqs(self, subject: str = "", topic: str = "", search: str = "",
                   limit: int = 0, offset: int = 0) -> list[MCQ]: ...
 
@@ -264,6 +275,7 @@ class SQLiteRepository(AbstractRepository):
                     question_type TEXT NOT NULL DEFAULT 'STATIC'
                         CHECK(question_type IN ('STATIC','CURRENT_AFFAIRS','BIHAR_GK')),
                     event_date TEXT,
+                    public_id TEXT,
                     created_at TEXT DEFAULT (datetime('now'))
                 );
 
@@ -311,10 +323,28 @@ class SQLiteRepository(AbstractRepository):
             ("subtopic",      "ALTER TABLE mcqs ADD COLUMN subtopic TEXT NOT NULL DEFAULT ''"),
             ("question_type", "ALTER TABLE mcqs ADD COLUMN question_type TEXT NOT NULL DEFAULT 'STATIC'"),
             ("event_date",    "ALTER TABLE mcqs ADD COLUMN event_date TEXT"),
+            ("public_id",     "ALTER TABLE mcqs ADD COLUMN public_id TEXT"),
         ]
         for col, sql in mcq_migrations:
             if col not in existing_mcqs:
                 conn.execute(sql)
+
+        # Backfill public_id for rows that predate this column, then enforce uniqueness.
+        used_ids = {
+            r[0] for r in conn.execute(
+                "SELECT public_id FROM mcqs WHERE public_id IS NOT NULL AND public_id != ''"
+            ).fetchall()
+        }
+        missing = conn.execute(
+            "SELECT id FROM mcqs WHERE public_id IS NULL OR public_id = ''"
+        ).fetchall()
+        for (mcq_id,) in missing:
+            pid = _generate_public_id()
+            while pid in used_ids:
+                pid = _generate_public_id()
+            used_ids.add(pid)
+            conn.execute("UPDATE mcqs SET public_id=? WHERE id=?", (pid, mcq_id))
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mcqs_public_id ON mcqs(public_id)")
 
         existing_cp = {row[1] for row in conn.execute("PRAGMA table_info(card_progress)").fetchall()}
         cp_migrations = [
@@ -340,20 +370,30 @@ class SQLiteRepository(AbstractRepository):
     # --- MCQ CRUD ---
 
     def add_mcq(self, mcq: MCQ) -> MCQ:
+        if not mcq.public_id:
+            mcq.public_id = self._unique_public_id()
         with self._conn() as conn:
             cur = conn.execute(
                 """INSERT INTO mcqs (question, option_a, option_b, option_c, option_d,
                    correct_answer, subject, topic, subtopic, explanation,
-                   question_type, event_date)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   question_type, event_date, public_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (mcq.question, mcq.option_a, mcq.option_b, mcq.option_c, mcq.option_d,
                  mcq.correct_answer, mcq.subject, mcq.topic, mcq.subtopic, mcq.explanation,
                  mcq.question_type,
-                 mcq.event_date.isoformat() if mcq.event_date else None),
+                 mcq.event_date.isoformat() if mcq.event_date else None,
+                 mcq.public_id),
             )
             mcq.id = cur.lastrowid
             mcq.created_at = datetime.now()
         return mcq
+
+    def _unique_public_id(self) -> str:
+        with self._conn() as conn:
+            while True:
+                pid = _generate_public_id()
+                if not conn.execute("SELECT 1 FROM mcqs WHERE public_id=?", (pid,)).fetchone():
+                    return pid
 
     def update_mcq(self, mcq: MCQ) -> MCQ:
         with self._conn() as conn:
@@ -377,6 +417,13 @@ class SQLiteRepository(AbstractRepository):
     def get_mcq(self, mcq_id: int) -> Optional[MCQ]:
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM mcqs WHERE id=?", (mcq_id,)).fetchone()
+        return self._row_to_mcq(row) if row else None
+
+    def get_mcq_by_public_id(self, public_id: str) -> Optional[MCQ]:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM mcqs WHERE public_id=?", (public_id.strip().upper(),)
+            ).fetchone()
         return self._row_to_mcq(row) if row else None
 
     def list_mcqs(self, subject: str = "", topic: str = "", search: str = "",
@@ -408,9 +455,10 @@ class SQLiteRepository(AbstractRepository):
             params.append(topic)
         if search:
             sql += (" AND (question LIKE ? OR option_a LIKE ? OR option_b LIKE ?"
-                    " OR option_c LIKE ? OR option_d LIKE ? OR subject LIKE ? OR topic LIKE ?)")
+                    " OR option_c LIKE ? OR option_d LIKE ? OR subject LIKE ? OR topic LIKE ?"
+                    " OR public_id LIKE ?)")
             like = f"%{search}%"
-            params.extend([like, like, like, like, like, like, like])
+            params.extend([like, like, like, like, like, like, like, like])
         return sql, params
 
     _VISIBLE_FILTER = """
@@ -826,6 +874,7 @@ class SQLiteRepository(AbstractRepository):
             explanation=row["explanation"] or "",
             question_type=row["question_type"] if "question_type" in row.keys() else "STATIC",
             event_date=date.fromisoformat(event_date_raw) if event_date_raw else None,
+            public_id=(row["public_id"] if "public_id" in row.keys() else None) or "",
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
         )
 
@@ -943,6 +992,10 @@ class CachedRepository(AbstractRepository):
 
         inserted = 0
         skipped = 0
+        # Rows pulled from Supabase without a public_id (pre-dates the column) get
+        # one generated locally now; pushed back to Supabase after the transaction.
+        used_public_ids = {m.get("public_id") for m in mcqs if m.get("public_id")}
+        backfilled_public_ids: list[tuple[int, str]] = []
         with self._local._conn() as conn:
             # Delete in child-first order to satisfy foreign key constraints
             conn.execute("DELETE FROM review_logs")
@@ -957,18 +1010,25 @@ class CachedRepository(AbstractRepository):
                     q_type = (m.get("question_type") or "STATIC").strip().upper()
                     if q_type not in ("STATIC", "CURRENT_AFFAIRS", "BIHAR_GK"):
                         q_type = "STATIC"
+                    pid = (m.get("public_id") or "").strip()
+                    if not pid:
+                        pid = _generate_public_id()
+                        while pid in used_public_ids:
+                            pid = _generate_public_id()
+                        used_public_ids.add(pid)
+                        backfilled_public_ids.append((m["id"], pid))
                     conn.execute(
                         """INSERT INTO mcqs (id, question, option_a, option_b, option_c, option_d,
                            correct_answer, subject, topic, subtopic, explanation,
-                           question_type, event_date, created_at)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           question_type, event_date, public_id, created_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (m["id"],
                          m.get("question") or "", m.get("option_a") or "",
                          m.get("option_b") or "", m.get("option_c") or "",
                          m.get("option_d") or "", ans,
                          m.get("subject") or "", m.get("topic") or "",
                          m.get("subtopic") or "", m.get("explanation") or "",
-                         q_type, m.get("event_date"),
+                         q_type, m.get("event_date"), pid,
                          _norm_dt(m.get("created_at"))),
                     )
                     inserted += 1
@@ -1049,6 +1109,14 @@ class CachedRepository(AbstractRepository):
                 )
 
         self._sync_hidden_from_supabase()
+        if backfilled_public_ids:
+            def _push_backfilled_ids():
+                for mcq_id, pid in backfilled_public_ids:
+                    try:
+                        self._sb.table("mcqs").update({"public_id": pid}).eq("id", mcq_id).execute()
+                    except Exception:
+                        pass  # Supabase may not have the public_id column yet — retried next sync
+            threading.Thread(target=_push_backfilled_ids, daemon=True).start()
         return {"fetched": fetched, "inserted": inserted, "skipped": skipped}
 
     def _migrate_local_to_supabase(self) -> None:
@@ -1064,6 +1132,7 @@ class CachedRepository(AbstractRepository):
                 "topic": mcq.topic, "subtopic": mcq.subtopic, "explanation": mcq.explanation,
                 "question_type": mcq.question_type,
                 "event_date": mcq.event_date.isoformat() if mcq.event_date else None,
+                "public_id": mcq.public_id or _generate_public_id(),
             }).execute().data[0]
             id_map[mcq.id] = row["id"]
 
@@ -1098,6 +1167,9 @@ class CachedRepository(AbstractRepository):
 
     def get_mcq(self, mcq_id: int) -> Optional[MCQ]:
         return self._local.get_mcq(mcq_id)
+
+    def get_mcq_by_public_id(self, public_id: str) -> Optional[MCQ]:
+        return self._local.get_mcq_by_public_id(public_id)
 
     def list_mcqs(self, subject: str = "", topic: str = "", search: str = "",
                   limit: int = 0, offset: int = 0) -> list[MCQ]:
@@ -1166,6 +1238,8 @@ class CachedRepository(AbstractRepository):
     # ── Writes → Supabase first, then mirror to local ─────────────────────
 
     def add_mcq(self, mcq: MCQ) -> MCQ:
+        if not mcq.public_id:
+            mcq.public_id = _generate_public_id()
         row = self._sb.table("mcqs").insert({
             "question": mcq.question, "option_a": mcq.option_a, "option_b": mcq.option_b,
             "option_c": mcq.option_c, "option_d": mcq.option_d,
@@ -1173,21 +1247,23 @@ class CachedRepository(AbstractRepository):
             "topic": mcq.topic, "subtopic": mcq.subtopic, "explanation": mcq.explanation,
             "question_type": mcq.question_type,
             "event_date": mcq.event_date.isoformat() if mcq.event_date else None,
+            "public_id": mcq.public_id,
         }).execute().data[0]
         mcq.id = row["id"]
+        mcq.public_id = row.get("public_id") or mcq.public_id
         created = _norm_dt(row.get("created_at"))
         mcq.created_at = datetime.fromisoformat(created) if created else datetime.now()
         with self._local._conn() as conn:
             conn.execute(
                 """INSERT INTO mcqs (id, question, option_a, option_b, option_c, option_d,
                    correct_answer, subject, topic, subtopic, explanation,
-                   question_type, event_date, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   question_type, event_date, public_id, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (mcq.id, mcq.question, mcq.option_a, mcq.option_b, mcq.option_c, mcq.option_d,
                  mcq.correct_answer, mcq.subject, mcq.topic, mcq.subtopic, mcq.explanation,
                  mcq.question_type,
                  mcq.event_date.isoformat() if mcq.event_date else None,
-                 created),
+                 mcq.public_id, created),
             )
         return mcq
 

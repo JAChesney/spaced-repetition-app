@@ -47,6 +47,8 @@ TAXONOMY: dict[str, dict[str, list[str]]] = {
             "Earthquakes",
         ],
         "Indian Geography": [
+            "Phyisiographic Division",
+            "Location and Its Size",
             "States and Capitals",
             "Rivers",
             "Climate",

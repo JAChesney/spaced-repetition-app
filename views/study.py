@@ -191,7 +191,10 @@ def build(page: ft.Page, repo: AbstractRepository, navigate,
         n     = state["index"]
         total = len(queue)
         progress_bar.value   = n / total
-        question_label.value = f"{'REVIEW ' if is_review_session else ''}QUESTION {n + 1} OF {total}"
+        question_label.value = (
+            f"{'REVIEW ' if is_review_session else ''}QUESTION {n + 1} OF {total}"
+            f"  •  ID: {mcq.public_id or '—'}"
+        )
         question_text.value  = mcq.question
 
         pairs = list(zip(LETTERS, [mcq.option_a, mcq.option_b, mcq.option_c, mcq.option_d]))

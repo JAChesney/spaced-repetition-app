@@ -11,7 +11,7 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, on_edit) -> ft.Cont
     state = {"page": 0, "timer": None}
 
     search_field = ft.TextField(
-        label="Search questions...",
+        label="Search questions or ID...",
         prefix_icon=ft.Icons.SEARCH,
         on_change=lambda _: _debounce_search(),
         expand=True,
@@ -91,6 +91,9 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, on_edit) -> ft.Cont
                                     max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                             ft.Row(
                                 [
+                                    ft.Chip(label=ft.Text(mcq.public_id or "—",
+                                                           font_family="monospace"),
+                                            padding=ft.Padding.all(0)),
                                     ft.Chip(label=ft.Text(f"Ans: {mcq.correct_answer}"),
                                             padding=ft.Padding.all(0)),
                                     *(

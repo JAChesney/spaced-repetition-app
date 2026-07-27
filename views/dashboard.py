@@ -602,8 +602,8 @@ def build(page: ft.Page, repo: AbstractRepository, navigate) -> ft.Control:
             bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.AMBER),
             border=ft.Border.all(1, ft.Colors.with_opacity(0.4, ft.Colors.AMBER)),
             border_radius=10,
-            padding=ft.padding.symmetric(horizontal=12, vertical=8),
-            margin=ft.margin.only(bottom=8),
+            padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+            margin=ft.Margin.only(bottom=8),
         )
     else:
         sync_banner = ft.Container(visible=False)

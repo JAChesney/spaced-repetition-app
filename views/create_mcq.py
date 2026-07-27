@@ -278,6 +278,10 @@ def build(page: ft.Page, repo: AbstractRepository, navigate, edit_mcq: MCQ = Non
                               on_click=lambda _: navigate("manage" if is_edit else "library")),
                 ft.Text("Edit MCQ" if is_edit else "New MCQ",
                         size=20, weight=ft.FontWeight.BOLD, color=T.TEXT),
+                *([ft.Container(expand=True),
+                   ft.Text(edit_mcq.public_id, size=13, color=T.TEXT2,
+                           font_family="monospace")]
+                  if is_edit and edit_mcq.public_id else []),
             ],
             spacing=4,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
